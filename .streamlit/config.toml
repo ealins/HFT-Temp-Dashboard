@@ -1,0 +1,23 @@
+[server]
+maxUploadSize = 500
+headless = true
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+# HFT Stuttgart Brand Colors
+primaryColor = "#003366"           # HFT Dark Blue
+backgroundColor = "#f7f9fc"        # Light blue-grey background
+secondaryBackgroundColor = "#ffffff"  # White cards/panels
+textColor = "#1a2a3a"              # Dark slate text
+font = "sans serif"
+
+# Additional custom colors available via CSS
+# hft-blue = "#003366"
+# hft-blue-light = "#0066cc"
+# hft-blue-lighter = "#e6f0fa"
+# hft-accent-teal = "#009999"
+# hft-accent-green = "#00a651"
+# hft-accent-amber = "#e8a800"
+# hft-accent-red = "#cc3333"

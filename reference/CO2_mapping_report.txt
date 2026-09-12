@@ -1,0 +1,6 @@
+Provided HFT CO2 location workbook: 202510_CO2_Ampel_Standorte.xlsx
+Usable ID/Bau/Raum rows in Tabelle1: 36
+IDs matching sensor files in 202510_Sensordaten_CO2-Ampeln.zip: 33
+Mapped IDs not present in that archive: ESPcfe46b, ESPd10735, ESPd123f2
+Archive sensors without a matching location entry remain Unassigned.
+Numeric rooms are normalized to three digits for dashboard matching (e.g. 20 -> 020).

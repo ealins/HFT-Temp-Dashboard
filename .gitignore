@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+data/*.db
+data/*.db-*
+data/uploads/
+data/ifc_models/
+data/ifc_models.db
+data/ifc_models.db-*
+
+
+
+

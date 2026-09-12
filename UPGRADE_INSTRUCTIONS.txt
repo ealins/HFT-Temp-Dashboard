@@ -1,0 +1,5 @@
+1. Stop Streamlit with Ctrl+C.
+2. Copy the contents of this ZIP into your existing dashboard folder and allow Windows to replace matching source files.
+3. KEEP your existing `.streamlit/secrets.toml` and `data/temperature.db` / `data/co2.db`. This upgrade ZIP intentionally does not contain them.
+4. Activate your existing virtual environment and run: streamlit run app.py
+5. Upload CO2 from Data manager -> admin if it has not been imported yet.
