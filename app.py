@@ -122,7 +122,7 @@ def data_manager():
     if not admin_unlocked():
         st.caption("Data publishing and sensor/location mappings are restricted to administrators.")
         pwd = st.text_input("Admin password", type="password", key="admin_password")
-        if st.button("Unlock administration", type="primary", use_container_width=True):
+        if st.button("Unlock administration", type="primary", width="stretch"):
             if pwd and pwd == str(secret("ADMIN_PASSWORD", "CHANGE-ME")):
                 st.session_state.admin_ok = True
                 st.rerun()
@@ -131,7 +131,7 @@ def data_manager():
 
     status_col, lock_col = st.columns([4, 1])
     status_col.success("Admin unlocked")
-    if lock_col.button("Lock", use_container_width=True):
+    if lock_col.button("Lock", width="stretch"):
         st.session_state.admin_ok = False
         st.rerun()
 
@@ -143,7 +143,7 @@ def data_manager():
         with left:
             st.markdown("**Temperature history**")
             tf = st.file_uploader("Excel workbook", type=["xlsx"], key="temp_upload")
-            if tf and st.button("Publish Temperature", type="primary", use_container_width=True):
+            if tf and st.button("Publish Temperature", type="primary", width="stretch"):
                 with st.spinner("Importing Temperature workbook…"):
                     res = ingest_temperature_excel(tf, tf.name)
                     _clear_dashboard_caches()
@@ -152,7 +152,7 @@ def data_manager():
         with right:
             st.markdown("**CO₂ history**")
             cf = st.file_uploader("ZIP, CSV or Excel", type=["zip", "csv", "xlsx", "xls"], key="co2_upload")
-            if cf and st.button("Publish CO₂", type="primary", use_container_width=True):
+            if cf and st.button("Publish CO₂", type="primary", width="stretch"):
                 with st.spinner("Importing CO₂ data and applying the HFT mapping…"):
                     res = ingest_co2_upload(cf, cf.name)
                     _clear_dashboard_caches()
@@ -162,7 +162,7 @@ def data_manager():
 
         with st.expander("Import CO₂ from an HFT server/network path"):
             co2_path = st.text_input("CO₂ CSV directory", value="W:\\", key="co2_path")
-            if st.button("Publish CO₂ from path", use_container_width=True):
+            if st.button("Publish CO₂ from path", width="stretch"):
                 with st.spinner(f"Importing CO₂ from {co2_path}…"):
                     res = ingest_co2_from_path(co2_path)
                     _clear_dashboard_caches()
@@ -185,10 +185,10 @@ def data_manager():
                     mapping.to_csv(index=False).encode(),
                     file_name=f"{kind.lower().replace('₂', '2')}_sensor_mapping.csv",
                     mime="text/csv",
-                    use_container_width=True,
+                    width="stretch",
                 )
                 mf = upload_col.file_uploader("Upload CSV or Excel", type=["csv", "xlsx"], key=f"map_{kind}", label_visibility="collapsed")
-                if mf and st.button(f"Apply {kind} mapping", key=f"apply_{kind}", type="primary", use_container_width=True):
+                if mf and st.button(f"Apply {kind} mapping", key=f"apply_{kind}", type="primary", width="stretch"):
                     n = apply_mapping(kind, _read_mapping_upload(mf))
                     _clear_dashboard_caches()
                     cov2 = mapping_coverage(kind)
@@ -213,7 +213,7 @@ def render_ifc_admin():
     revision = revision_col.text_input("Revision (optional)", key="ifc_revision")
     uploads = st.file_uploader("IFC or IFCZIP files", type=["ifc", "ifczip", "zip"], accept_multiple_files=True, key="ifc_uploads")
     replace_role = st.checkbox("Disable existing active models with the same building and role after each successful import", key="ifc_replace_role")
-    if uploads and st.button("Validate, extract and register models", type="primary", use_container_width=True, key="ifc_publish"):
+    if uploads and st.button("Validate, extract and register models", type="primary", width="stretch", key="ifc_publish"):
         if not assigned:
             st.error("Enter or select a building before importing.")
         else:
@@ -237,18 +237,18 @@ def render_ifc_admin():
         return
     display = models.copy()
     display["size"] = display["size_bytes"].map(lambda value: f"{value / (1024 * 1024):.1f} MB")
-    st.dataframe(display.drop(columns=["size_bytes"]), use_container_width=True, hide_index=True)
+    st.dataframe(display.drop(columns=["size_bytes"]), width="stretch", hide_index=True)
     labels = {int(row.id): f"#{row.id} · {row.building} · {row.role} · {row.filename}" for row in models.itertuples()}
     selected_id = st.selectbox("Manage model", list(labels), format_func=labels.get, key="ifc_manage_id")
     selected = models.loc[models["id"] == selected_id].iloc[0]
     action_a, action_b = st.columns(2)
     active_label = "Disable model" if bool(selected["active"]) else "Enable model"
-    if action_a.button(active_label, use_container_width=True, key="ifc_toggle"):
+    if action_a.button(active_label, width="stretch", key="ifc_toggle"):
         set_model_active(selected_id, not bool(selected["active"]))
         _clear_dashboard_caches()
         st.rerun()
     confirm_delete = st.checkbox("Confirm permanent deletion of the selected model and extracted geometry", key="ifc_confirm_delete")
-    if action_b.button("Delete model", disabled=not confirm_delete, use_container_width=True, key="ifc_delete"):
+    if action_b.button("Delete model", disabled=not confirm_delete, width="stretch", key="ifc_delete"):
         delete_model(selected_id)
         _clear_dashboard_caches()
         st.rerun()
@@ -261,8 +261,8 @@ def render_ifc_admin():
     st.caption("Automatic guesses use IfcSpace LongName/Name and the containing IfcBuildingStorey. Edit the three dashboard columns to preserve a manual override.")
     editable = ["dashboard_building", "dashboard_floor", "dashboard_room"]
     disabled = [column for column in mappings.columns if column not in editable]
-    edited = st.data_editor(mappings, disabled=disabled, hide_index=True, use_container_width=True, key=f"ifc_space_editor_{selected['building']}")
-    if st.button("Save space mappings", type="primary", use_container_width=True, key="ifc_save_mappings"):
+    edited = st.data_editor(mappings, disabled=disabled, hide_index=True, width="stretch", key=f"ifc_space_editor_{selected['building']}")
+    if st.button("Save space mappings", type="primary", width="stretch", key="ifc_save_mappings"):
         count = update_space_mappings(edited)
         _clear_dashboard_caches()
         st.success(f"Saved {count} IFC space mappings.")
@@ -303,7 +303,7 @@ def render_floor_plan_admin():
     if upload_col.button(
         "Upload / replace plan",
         type="primary",
-        use_container_width=True,
+        width="stretch",
         disabled=upload is None,
         key="floor_plan_save",
     ):
@@ -318,7 +318,7 @@ def render_floor_plan_admin():
 
     if delete_col.button(
         "Delete current plan",
-        use_container_width=True,
+        width="stretch",
         disabled=existing is None,
         key="floor_plan_delete",
     ):
@@ -332,7 +332,7 @@ def render_floor_plan_admin():
         st.markdown("**Registered floor plans**")
         display = plans.drop(columns=["stored_filename"]).copy()
         display["size"] = display.pop("size_bytes").map(lambda value: f"{value / (1024 * 1024):.1f} MB")
-        st.dataframe(display, use_container_width=True, hide_index=True)
+        st.dataframe(display, width="stretch", hide_index=True)
 
 
 def _natural_key(value):
@@ -456,7 +456,7 @@ def render_3d_scope(building: str, floor: str):
         with viewer_col:
             st.plotly_chart(
                 figure,
-                use_container_width=True,
+                width="stretch",
                 key=f"ifc_{building}_{scope}_{scope_floor}_{scope_room}_{measurement}",
             )
         with plan_col:
@@ -471,12 +471,12 @@ def render_3d_scope(building: str, floor: str):
                 pdf_data,
                 file_name=plan["filename"],
                 mime="application/pdf",
-                use_container_width=True,
+                width="stretch",
             )
     else:
         st.plotly_chart(
             figure,
-            use_container_width=True,
+            width="stretch",
             key=f"ifc_{building}_{scope}_{scope_floor}_{scope_room}_{measurement}",
         )
         st.info(
@@ -622,21 +622,21 @@ def _detail_section(df: pd.DataFrame, kind: str, key_prefix: str, is_technical: 
         if is_technical:
             st.caption("The carpet uses the actual reading nearest the middle of each hour. Empty hours stay empty; no hourly average or interpolation is used.")
         
-        st.plotly_chart(observed_carpet(df, kind, sensor), use_container_width=True, key=f"{key_prefix}_carpet")
+        st.plotly_chart(observed_carpet(df, kind, sensor), width="stretch", key=f"{key_prefix}_carpet")
 
         st.markdown("**Measurement coverage / outages**")
-        st.plotly_chart(coverage_timeline(df), use_container_width=True, key=f"{key_prefix}_coverage")
+        st.plotly_chart(coverage_timeline(df), width="stretch", key=f"{key_prefix}_coverage")
 
         st.markdown("**Observed-value distribution**")
-        st.plotly_chart(distribution(df, kind), use_container_width=True, key=f"{key_prefix}_distribution")
+        st.plotly_chart(distribution(df, kind), width="stretch", key=f"{key_prefix}_distribution")
 
         if is_technical:
             st.markdown("**Data quality and gaps by sensor**")
             quality = gap_stats(df)
-            st.dataframe(quality, use_container_width=True, hide_index=True)
+            st.dataframe(quality, width="stretch", hide_index=True)
 
         st.markdown("**Raw observations**")
-        st.dataframe(df.tail(5000), use_container_width=True, hide_index=True)
+        st.dataframe(df.tail(5000), width="stretch", hide_index=True)
         st.download_button(
             f"Download filtered {kind} CSV",
             df.to_csv(index=False).encode(),
@@ -686,7 +686,7 @@ def render_dashboard():
 
     admin_text, admin_action = st.columns([8, 1])
     admin_text.markdown('<div class="admin-toolbar">Staff dashboard · administrative tools are kept separate from viewing controls.</div>', unsafe_allow_html=True)
-    if admin_action.button("⚙ Admin", use_container_width=True):
+    if admin_action.button("⚙ Admin", width="stretch"):
         data_manager()
 
     if not exists("Temperature") and not exists("CO₂") and not _cached_model_buildings(_ifc_version()):
@@ -754,7 +754,7 @@ def render_dashboard():
     if live_available and source_mode != "Historical uploads":
         auto_refresh = st.sidebar.checkbox("Auto-refresh live servers", value=True)
         refresh_seconds = st.sidebar.selectbox("Refresh every", [15, 30, 60, 300], index=1, format_func=lambda x: f"{x} seconds" if x < 60 else f"{x // 60} minutes")
-        if st.sidebar.button("Refresh now", use_container_width=True):
+        if st.sidebar.button("Refresh now", width="stretch"):
             st.rerun()
 
     def panels():
@@ -792,7 +792,7 @@ def render_dashboard():
             _metric_rows(temp_df, "°C")
 
         if not temp_df.empty:
-            st.plotly_chart(temperature_time_series(temp_df), use_container_width=True, key="temperature_main")
+            st.plotly_chart(temperature_time_series(temp_df), width="stretch", key="temperature_main")
         
         if is_technical:
             _detail_section(temp_df, "Temperature", "temperature", True)
@@ -811,7 +811,7 @@ def render_dashboard():
             else:
                 st.caption(f"Reference threshold: {reference:g} ppm · Values above indicate need for ventilation.")
             
-            st.plotly_chart(co2_time_series(co2_df, reference), use_container_width=True, key="co2_main")
+            st.plotly_chart(co2_time_series(co2_df, reference), width="stretch", key="co2_main")
         
         if is_technical:
             _detail_section(co2_df, "CO₂", "co2", True)

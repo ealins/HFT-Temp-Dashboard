@@ -6,14 +6,14 @@ headless = true
 gatherUsageStats = false
 
 [theme]
-# HFT Stuttgart Brand Colors
-primaryColor = "#003366"           # HFT Dark Blue
-backgroundColor = "#f7f9fc"        # Light blue-grey background
-secondaryBackgroundColor = "#ffffff"  # White cards/panels
-textColor = "#1a2a3a"              # Dark slate text
+# HFT Stuttgart brand colors.
+primaryColor = "#003366"
+backgroundColor = "#f7f9fc"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#1a2a3a"
 font = "sans serif"
 
-# Additional custom colors available via CSS
+# Additional colors are applied through the dashboard CSS.
 # hft-blue = "#003366"
 # hft-blue-light = "#0066cc"
 # hft-blue-lighter = "#e6f0fa"

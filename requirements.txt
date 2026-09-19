@@ -4,4 +4,4 @@ plotly>=5.18,<7
 openpyxl>=3.1,<4
 requests>=2.31,<3
 orjson>=3.9,<4
-ifcopenshell>=0.8.5,<0.9
+ifcopenshell>=0.8.4.post1,<0.9

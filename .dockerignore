@@ -1,6 +1,7 @@
+.git/
 .venv/
 __pycache__/
-*.pyc
+*.py[cod]
 .streamlit/secrets.toml
 .streamlit/secrets.toml.*
 !.streamlit/secrets.toml.example
