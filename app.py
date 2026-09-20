@@ -161,14 +161,50 @@ def data_manager():
                 st.rerun()
 
         with st.expander("Import CO₂ from an HFT server/network path"):
-            co2_path = st.text_input("CO₂ CSV directory", value="W:\\", key="co2_path")
+            st.caption(
+                "This reads a directory from the server running the dashboard, not from your browser. "
+                "Streamlit Community Cloud cannot access HFT private network shares or a Windows mapped drive such as `W:\\`."
+            )
+            co2_path = st.text_input(
+                "CO₂ CSV directory",
+                value="W:\\" if os.name == "nt" else "",
+                placeholder=r"W:\ or /mnt/hft-co2",
+                help="Use a directory mounted on the machine that hosts this dashboard.",
+                key="co2_path",
+            )
             if st.button("Publish CO₂ from path", width="stretch"):
-                with st.spinner(f"Importing CO₂ from {co2_path}…"):
-                    res = ingest_co2_from_path(co2_path)
-                    _clear_dashboard_caches()
-                cov = mapping_coverage("CO₂")
-                st.success(f"Loaded {res['ingested']:,} readings. Mapped {cov['mapped']} of {cov['sensors']} sensors.")
-                st.rerun()
+                path_to_import = co2_path.strip()
+                if not path_to_import:
+                    st.warning("Enter a directory path mounted on the dashboard host.")
+                else:
+                    try:
+                        with st.spinner("Importing CO₂ files from the dashboard host…"):
+                            res = ingest_co2_from_path(path_to_import)
+                    except FileNotFoundError:
+                        st.error(
+                            "That directory is not available to this dashboard host. "
+                            "A Windows network drive can be imported only when the app runs on a machine "
+                            "that has the share mounted and can read it. On Streamlit Community Cloud, "
+                            "use the file upload above or a reachable HTTPS data API instead."
+                        )
+                    except PermissionError:
+                        st.error(
+                            "The dashboard service cannot read that directory. Verify that its host account "
+                            "has permission to access the mounted share."
+                        )
+                    except OSError:
+                        st.error(
+                            "The dashboard server could not read the selected directory. Verify that it is "
+                            "a mounted folder available to this deployment, then try again."
+                        )
+                    else:
+                        _clear_dashboard_caches()
+                        cov = mapping_coverage("CO₂")
+                        st.success(
+                            f"Loaded {res['ingested']:,} readings. "
+                            f"Mapped {cov['mapped']} of {cov['sensors']} sensors."
+                        )
+                        st.rerun()
 
     with mapping_tab:
         st.caption("Mappings accept Sensor/ID, Building/Bau, Room/Raum and optional Floor/Geschoss columns. If Floor is omitted, it is inferred from the room label.")
