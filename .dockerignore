@@ -4,7 +4,6 @@ __pycache__/
 *.py[cod]
 .streamlit/secrets.toml
 .streamlit/secrets.toml.*
-!.streamlit/secrets.toml.example
 data/*.db
 data/*.db-*
 data/uploads/
