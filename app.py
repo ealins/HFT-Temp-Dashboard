@@ -162,8 +162,8 @@ def data_manager():
 
         with st.expander("Import CO₂ from an HFT server/network path"):
             st.caption(
-                "This reads a directory from the server running the dashboard, not from your browser. "
-                "Streamlit Community Cloud cannot access HFT private network shares or a Windows mapped drive such as `W:\\`."
+                "This reads a directory mounted on the machine running the dashboard, not from your browser. "
+                "Use the mapped `W:\\` drive when this Windows dashboard host can access it."
             )
             co2_path = st.text_input(
                 "CO₂ CSV directory",
@@ -172,8 +172,16 @@ def data_manager():
                 help="Use a directory mounted on the machine that hosts this dashboard.",
                 key="co2_path",
             )
+            path_to_import = co2_path.strip()
+            if path_to_import:
+                if os.path.isdir(path_to_import):
+                    st.caption(f"✅ `{path_to_import}` is available to this dashboard host.")
+                else:
+                    st.caption(
+                        "The folder is checked on the dashboard host. Verify its drive mapping and read permission "
+                        "before importing."
+                    )
             if st.button("Publish CO₂ from path", width="stretch"):
-                path_to_import = co2_path.strip()
                 if not path_to_import:
                     st.warning("Enter a directory path mounted on the dashboard host.")
                 else:
@@ -182,10 +190,8 @@ def data_manager():
                             res = ingest_co2_from_path(path_to_import)
                     except FileNotFoundError:
                         st.error(
-                            "That directory is not available to this dashboard host. "
-                            "A Windows network drive can be imported only when the app runs on a machine "
-                            "that has the share mounted and can read it. On Streamlit Community Cloud, "
-                            "use the file upload above or a reachable HTTPS data API instead."
+                            f"The dashboard host cannot find `{path_to_import}`. Verify that the drive or network "
+                            "share is mounted for the account running Streamlit, then try again."
                         )
                     except PermissionError:
                         st.error(
