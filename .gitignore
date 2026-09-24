@@ -10,3 +10,10 @@ data/ifc_models/
 data/ifc_models.db
 data/ifc_models.db-*
 logs/
+
+# SimStadt Sandbox Ignore
+simstadt_sandbox/outputs/
+simstadt_sandbox/*.db
+simstadt_sandbox/*.db-*
+simstadt_sandbox/*.cache
+simstadt_sandbox/*.jar

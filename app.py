@@ -51,6 +51,7 @@ from temperature_dashboard.ifc_models import (
 )
 from temperature_dashboard.ifc_viewer import build_ifc_figure
 from temperature_dashboard.server import fetch_server_data
+from simstadt_sandbox.sandbox_app import render_simstadt_sandbox
 
 st.set_page_config(page_title="HFT Indoor Environment Dashboard", page_icon="🌡️", layout="wide")
 
@@ -746,16 +747,28 @@ def render_dashboard():
         st.warning("No floor locations can be derived for this Building. An administrator can add Floor/Geschoss in the sensor mapping.")
         return
     floor = st.sidebar.selectbox("Floor", floors)
-    ui_mode = st.sidebar.radio("Dashboard View", ["Normal", "Technical", "3D"], horizontal=False)
-
-    if ui_mode == "3D":
-        render_3d_scope(building, floor)
-        return
+    ui_mode = st.sidebar.radio("Dashboard View", ["Normal", "Technical", "3D", "SimStadt Sandbox"], horizontal=False)
 
     temp_rooms = rooms_available("Temperature", building, floor)
     co2_rooms = rooms_available("CO₂", building, floor)
     temp_room = st.sidebar.selectbox("Temperature room", temp_rooms, key="temp_room") if temp_rooms else None
     co2_room = st.sidebar.selectbox("CO₂ room", co2_rooms, key="co2_room") if co2_rooms else None
+
+    spans = selected_spans(building, temp_room, co2_room)
+    span_start, span_end, span_basis = choose_span_basis(spans)
+    if span_start is None:
+        st.warning("The selected Building has no observations.")
+        return
+    start, end, range_choice = choose_time_range(span_start, span_end)
+    st.sidebar.caption(f"Window: {start:%d %b %Y %H:%M} → {end:%d %b %Y %H:%M}")
+
+    if ui_mode == "SimStadt Sandbox":
+        render_simstadt_sandbox(building, floor, start, end)
+        return
+
+    if ui_mode == "3D":
+        render_3d_scope(building, floor)
+        return
 
     if not temp_rooms:
         st.sidebar.caption("No Temperature rooms on this Floor.")
@@ -772,14 +785,6 @@ def render_dashboard():
         sensors = hc[(hc["building"].astype(str) == str(building)) & (hc["room"].astype(str) == str(co2_room))]["sensor"].astype(str).tolist()
         if sensors:
             st.sidebar.caption("CO₂ sensor IDs: " + ", ".join(sorted(sensors, key=_natural_key)))
-
-    spans = selected_spans(building, temp_room, co2_room)
-    span_start, span_end, span_basis = choose_span_basis(spans)
-    if span_start is None:
-        st.warning("The selected Building has no observations.")
-        return
-    start, end, range_choice = choose_time_range(span_start, span_end)
-    st.sidebar.caption(f"Window: {start:%d %b %Y %H:%M} → {end:%d %b %Y %H:%M}")
 
     temp_cfg, co2_cfg = server_config("Temperature"), server_config("CO₂")
     live_available = bool(temp_cfg["url"] or co2_cfg["url"])
