@@ -147,6 +147,7 @@ def _run_simstadt_docker(citygml_path: Path, output_dir: Path, workflow: str) ->
     cmd = [
         docker, "run", "--rm",
         "-v", f"{citygml_path.parent.resolve()}:/data",
+        "-e", "LOCALE=en_GB",
         "simstadt/simstadt",
         "simstadt", workflow, f"/data/{citygml_path.name}",
         "-p", "/data/output",
@@ -381,7 +382,7 @@ def render_validation(
     co2_threshold: float,
     log: str,
 ):
-    st.subheader("6 · Automatic validation against HFT sensors")
+    st.subheader("5 · Automatic validation against HFT sensors")
 
     summary = parse_simstadt_summary(log)
     if summary:
@@ -961,7 +962,7 @@ def render_simstadt_sandbox(
             st.code(log[-12000:] if log else "No diagnostic log returned.")
 
     st.divider()
-    st.subheader("5 · Research hand-off")
+    st.subheader("6 · Research hand-off")
 
     if stats:
         export_root = Path(tempfile.gettempdir()) / "hft_simstadt_profiles"
