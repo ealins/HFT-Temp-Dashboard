@@ -736,8 +736,76 @@ def discover_citygml_inputs(building: str, floor: str) -> list[Path]:
     ]
     return sorted(filtered or candidates)
 
+IFC_CITYGML_TOOLS = Path(__file__).resolve().parents[1] / ".tools" / "ifc-to-citygml3"
+IFC_CITYGML_SCRIPT = IFC_CITYGML_TOOLS / "ifc2citygml.py"
+IFC_CITYGML_VENV_PYTHON = IFC_CITYGML_TOOLS / ".venv" / "Scripts" / "python.exe"
+
+
+def _converter_python() -> str:
+    """Use the dedicated converter environment when the bundled setup exists."""
+    candidates = [
+        IFC_CITYGML_VENV_PYTHON,
+        IFC_CITYGML_TOOLS / ".venv" / "bin" / "python",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return shutil.which("python") or os.getenv("PYTHON", "python")
+
+
+def _conversion_manifest_path(output_path: Path) -> Path:
+    return output_path.with_suffix(output_path.suffix + ".json")
+
+
+def _conversion_cache_is_valid(
+    ifc_path: Path,
+    output_path: Path,
+    georef: bool,
+    converter_id: str,
+) -> bool:
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        return False
+    manifest_path = _conversion_manifest_path(output_path)
+    if not manifest_path.exists():
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        stat = ifc_path.stat()
+        return (
+            manifest.get("source") == str(ifc_path.resolve())
+            and manifest.get("source_mtime_ns") == stat.st_mtime_ns
+            and manifest.get("source_size") == stat.st_size
+            and bool(manifest.get("georef")) == bool(georef)
+            and manifest.get("converter") == converter_id
+        )
+    except Exception:
+        return False
+
+
+def _write_conversion_manifest(
+    ifc_path: Path,
+    output_path: Path,
+    georef: bool,
+    converter_id: str,
+) -> None:
+    stat = ifc_path.stat()
+    _conversion_manifest_path(output_path).write_text(
+        json.dumps(
+            {
+                "source": str(ifc_path.resolve()),
+                "source_mtime_ns": stat.st_mtime_ns,
+                "source_size": stat.st_size,
+                "georef": bool(georef),
+                "converter": converter_id,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 def discover_ifc_converter() -> tuple[str | None, str]:
-    """Find the TUM IFC→CityGML 3.0 converter via env, local checkout, or Docker."""
+    """Prefer direct local TUM-GIS conversion; use Docker only as fallback."""
     env = os.getenv("IFC2CITYGML_COMMAND", "").strip()
     if env:
         return env, "IFC2CITYGML_COMMAND"
@@ -752,6 +820,7 @@ def discover_ifc_converter() -> tuple[str | None, str]:
 
     repo_root = Path(__file__).resolve().parents[1]
     script_candidates = [
+        IFC_CITYGML_SCRIPT,
         repo_root / "ifc2citygml.py",
         repo_root / "ifc-to-citygml3" / "ifc2citygml.py",
         repo_root.parent / "ifc-to-citygml3" / "ifc2citygml.py",
@@ -759,16 +828,25 @@ def discover_ifc_converter() -> tuple[str | None, str]:
     ]
     for script in script_candidates:
         if script.exists():
-            return str(script), "local converter script"
+            source = (
+                "managed local converter"
+                if script.resolve() == IFC_CITYGML_SCRIPT.resolve()
+                else "local converter script"
+            )
+            return str(script), source
 
     docker = shutil.which("docker")
     if docker:
-        return docker, "docker"
+        return docker, "docker fallback"
     return None, ""
 
 
-def convert_ifc_to_citygml(ifc_path: Path, output_path: Path, georef: bool = False) -> tuple[bool, str]:
-    """Run the TUM-GIS IFC→CityGML 3.0 converter and return its log."""
+def convert_ifc_to_citygml(
+    ifc_path: Path,
+    output_path: Path,
+    georef: bool = False,
+) -> tuple[bool, str]:
+    """Convert IFC to CityGML, preferring direct local execution and cached output."""
     ifc_path = ifc_path.expanduser().resolve()
     output_path = output_path.expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -778,37 +856,59 @@ def convert_ifc_to_citygml(ifc_path: Path, output_path: Path, georef: bool = Fal
 
     command, source = discover_ifc_converter()
     if not command:
-        return False, "No IFC→CityGML converter or Docker runtime was detected."
+        return (
+            False,
+            "No IFC-to-CityGML converter is installed. Run scripts/setup_ifc2citygml.ps1 "
+            "for the recommended local setup, or install Docker as a fallback.",
+        )
 
-    if source == "docker":
-        # The generated GML must live in a host-mounted directory. Copy only
-        # the selected IFC into the run workspace; the source IFC is untouched.
+    converter_id = f"{source}:{command}"
+    if _conversion_cache_is_valid(ifc_path, output_path, georef, converter_id):
+        return True, "Cached CityGML is up to date; IFC geometry conversion was skipped."
+
+    output_path.unlink(missing_ok=True)
+
+    if source == "docker fallback":
         workspace = output_path.parent
         docker_ifc = workspace / ifc_path.name
         if docker_ifc.resolve() != ifc_path.resolve():
             shutil.copy2(ifc_path, docker_ifc)
 
         cmd = [
-            command, "run", "--rm",
-            "-v", f"{workspace.resolve()}:/app",
+            command,
+            "run",
+            "--rm",
+            "-v",
+            f"{workspace.resolve()}:/app",
             "ghcr.io/tum-gis/ifc-to-citygml3:latest",
             f"/app/{docker_ifc.name}",
-            "-o", f"/app/{output_path.name}",
+            "-o",
+            f"/app/{output_path.name}",
         ]
-        if georef:
-            cmd.append("--georef-oktoberfest")
-    elif source in {"IFC2CITYGML_SCRIPT", "local converter script"}:
-        cmd = [shutil.which("python") or os.getenv("PYTHON", "python"), command,
-               str(ifc_path), "-o", str(output_path)]
-        if georef:
-            cmd.append("--georef-oktoberfest")
+    elif source in {
+        "IFC2CITYGML_SCRIPT",
+        "local converter script",
+        "managed local converter",
+    }:
+        cmd = [
+            _converter_python(),
+            command,
+            str(ifc_path),
+            "-o",
+            str(output_path),
+        ]
     else:
         cmd = [command, str(ifc_path), "-o", str(output_path)]
-        if georef:
-            cmd.append("--georef-oktoberfest")
+
+    if georef:
+        cmd.append("--georef-oktoberfest")
 
     ok, log = _run_command(cmd, timeout_s=1800)
-    return ok, log
+    if ok and output_path.exists() and output_path.stat().st_size > 0:
+        _write_conversion_manifest(ifc_path, output_path, georef, converter_id)
+        return True, log or f"Converted with {source}."
+
+    return False, log or "IFC-to-CityGML conversion did not produce an output file."
 
 
 def _registered_ifc_path(row: pd.Series) -> Path | None:
@@ -999,12 +1099,15 @@ def render_simstadt_sandbox(
                     registered_paths[label] = resolved
         converter, converter_source = discover_ifc_converter()
         if converter:
-            st.success(f"IFC→CityGML converter detected: {converter_source}")
+            if converter_source in {"managed local converter", "local executable", "IFC2CITYGML_SCRIPT", "local converter script"}:
+                st.success(f"Direct local IFC-to-CityGML converter detected: {converter_source}")
+            else:
+                st.info("Docker IFC-to-CityGML converter detected as fallback; local conversion is not installed.")
         else:
             st.warning(
-                "No IFC→CityGML conversion backend is available on this machine. "
-                "Install Docker Desktop, install the TUM-GIS converter locally, or set "
-                "IFC2CITYGML_COMMAND / IFC2CITYGML_SCRIPT."
+                "No IFC-to-CityGML converter is available. Recommended: run "
+                "scripts/setup_ifc2citygml.ps1 once to install the direct local converter. "
+                "Docker remains a fallback."
             )
 
         if registered_files:
