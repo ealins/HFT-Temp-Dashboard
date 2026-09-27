@@ -226,7 +226,7 @@ Then open:
 http://localhost:8501
 ~~~
 
-The project stores persistent dashboard data in the \`data/\` directory.
+The project stores persistent dashboard data in the `data/` directory.
 
 ## Typical Use Cases
 
