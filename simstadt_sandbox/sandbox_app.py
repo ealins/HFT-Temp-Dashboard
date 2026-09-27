@@ -394,6 +394,132 @@ def stop_simstadt_background(output_dir: Path) -> tuple[bool, str]:
 
 
 
+SIMSTADT_WORKFLOW_STAGES = {
+    "HeatDemand": [
+        "Import CityGML",
+        "Geometric Preprocessor",
+        "Geometric Estimator",
+        "Physics Preprocessor",
+        "Usage Preprocessor",
+        "Weather Processor",
+        "Irradiance Processor",
+        "Monthly Energy Balance",
+    ],
+    "HourlyHeatDemand": [
+        "Import CityGML",
+        "Geometric Preprocessor",
+        "Geometric Estimator",
+        "Physics Preprocessor",
+        "Usage Preprocessor",
+        "Weather Processor",
+        "Irradiance Processor",
+        "Monthly Energy Balance",
+        "Hourly Heat Demand",
+    ],
+    "EnvironmentalAnalysis": [
+        "Import CityGML",
+        "Geometric Preprocessor",
+        "Geometric Estimator",
+        "Physics Preprocessor",
+        "Usage Preprocessor",
+        "Systems Preprocessor",
+        "Weather Processor",
+        "Irradiance Processor",
+        "Monthly Energy Balance",
+        "Primary Energy & CO₂",
+    ],
+}
+
+
+def _simstadt_workflow_progress(output_dir: Path, workflow: str) -> dict:
+    """Infer stage progress from SimStadt's numbered workflow output directories."""
+    stages = SIMSTADT_WORKFLOW_STAGES.get(workflow, [])
+    total = len(stages)
+
+    roots = [
+        output_dir,
+        Path(str(output_dir) + ".proj"),
+        output_dir.parent,
+    ]
+    step_dirs: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if not path.is_dir() or ".step" not in path.name.lower():
+                continue
+            resolved = str(path.resolve())
+            if resolved not in seen:
+                seen.add(resolved)
+                step_dirs.append(path)
+
+    numbered: list[tuple[int, Path]] = []
+    for path in step_dirs:
+        match = re.match(r"^(\d+)[_-]", path.name)
+        if match:
+            numbered.append((int(match.group(1)), path))
+    numbered.sort(key=lambda item: (item[0], str(item[1])))
+
+    current_number = numbered[-1][0] if numbered else 0
+    current_name = ""
+    if current_number and 1 <= current_number <= total:
+        current_name = stages[current_number - 1]
+
+    # A step directory indicates that SimStadt has entered that stage.
+    # Treat the current stage as in-progress rather than already complete.
+    completed = max(0, min(total, current_number - 1))
+    if current_number >= total and numbered:
+        completed = total
+
+    percent = 0.0
+    if total:
+        if completed >= total:
+            percent = 1.0
+        elif current_number:
+            percent = min(0.97, max(0.02, (current_number - 0.35) / total))
+        else:
+            percent = 0.02
+
+    latest_log_line = ""
+    try:
+        lines = [
+            line.strip()
+            for line in (get_simstadt_background_status(output_dir).get("log_tail", "") or "").splitlines()
+            if line.strip()
+        ]
+        if lines:
+            latest_log_line = lines[-1][-240:]
+    except Exception:
+        pass
+
+    return {
+        "total": total,
+        "completed": completed,
+        "current_number": current_number,
+        "current_name": current_name or "Initializing / preparing workflow",
+        "percent": percent,
+        "latest_log_line": latest_log_line,
+        "stage_names": stages,
+    }
+
+
+def _format_elapsed(started_at: str | None) -> str:
+    if not started_at:
+        return "—"
+    try:
+        started = pd.Timestamp(started_at)
+        now = pd.Timestamp.now(tz=started.tz) if started.tzinfo else pd.Timestamp.now()
+        seconds = max(0, int((now - started).total_seconds()))
+        minutes, seconds = divmod(seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"{hours}h {minutes:02d}m {seconds:02d}s"
+        return f"{minutes}m {seconds:02d}s"
+    except Exception:
+        return "—"
+
+
 def _render_simstadt_completed_results(
     output_dir: Path,
     temp_df: pd.DataFrame,
@@ -405,7 +531,48 @@ def _render_simstadt_completed_results(
     state = status.get("state", "idle")
 
     if state == "running":
+        workflow = str(status.get("workflow", "HeatDemand"))
+        progress = _simstadt_workflow_progress(output_dir, workflow)
+        pct = int(round(progress["percent"] * 100))
+
         st.info("SimStadt is running in the background. Streamlit remains responsive.")
+
+        p1, p2, p3 = st.columns([2.2, 1.0, 1.3])
+        with p1:
+            st.progress(
+                progress["percent"],
+                text=f"Estimated progress: {pct}% · Stage {progress['current_number'] or 0}/{progress['total'] or '?'} · {progress['current_name']}",
+            )
+        with p2:
+            st.metric("Elapsed", _format_elapsed(status.get("started_at")))
+        with p3:
+            st.metric("Workflow", workflow)
+
+        st.caption(
+            "Progress is inferred from SimStadt workflow stages, not a native numeric percentage. "
+            "The percentage is therefore an estimate; the current stage and worker status are the reliable indicators."
+        )
+
+        if progress["latest_log_line"]:
+            st.caption(f"Latest worker message: {progress['latest_log_line']}")
+
+        with st.expander("Workflow stages", expanded=True):
+            rows = []
+            for idx, stage in enumerate(progress["stage_names"], start=1):
+                if idx < progress["current_number"]:
+                    state_label = "✓ Complete"
+                elif idx == progress["current_number"]:
+                    state_label = "▶ Running"
+                else:
+                    state_label = "○ Pending"
+                rows.append({"#": idx, "Stage": stage, "Status": state_label})
+            if rows:
+                st.dataframe(
+                    pd.DataFrame(rows),
+                    width="stretch",
+                    hide_index=True,
+                )
+
         with st.expander("Live SimStadt output", expanded=False):
             st.code(status.get("log_tail", "") or "Waiting for SimStadt output…")
         return
