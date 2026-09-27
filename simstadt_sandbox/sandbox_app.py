@@ -862,7 +862,14 @@ def convert_ifc_to_citygml(
             "for the recommended local setup, or install Docker as a fallback.",
         )
 
-    converter_id = f"{source}:{command}"
+    command_path = Path(command).expanduser()
+    command_version = (
+        f":{command_path.stat().st_mtime_ns}"
+        if source in {"managed local converter", "local converter script", "IFC2CITYGML_SCRIPT"}
+        and command_path.exists()
+        else ""
+    )
+    converter_id = f"{source}:{command}{command_version}"
     if _conversion_cache_is_valid(ifc_path, output_path, georef, converter_id):
         return True, "Cached CityGML is up to date; IFC geometry conversion was skipped."
 
@@ -1258,26 +1265,22 @@ def render_simstadt_sandbox(
                 return
 
             generated_gml = run_root / f"{ifc_source.stem}.gml"
-            needs_conversion = (
-                not generated_gml.exists()
-                or generated_gml.stat().st_mtime_ns < ifc_source.stat().st_mtime_ns
-            )
-
-            if needs_conversion:
-                with st.spinner(f"Converting {ifc_label} → CityGML 3.0…"):
-                    converted, conversion_log = convert_ifc_to_citygml(
-                        ifc_source,
-                        generated_gml,
-                        georef=False,
-                    )
-                if not converted or not generated_gml.exists():
-                    st.error("Automatic IFC → CityGML 3.0 conversion failed.")
-                    st.code(
-                        conversion_log[-12000:]
-                        if conversion_log
-                        else "No converter log returned."
-                    )
-                    return
+            with st.spinner(f"Preparing CityGML 3.0 from {ifc_label}…"):
+                converted, conversion_log = convert_ifc_to_citygml(
+                    ifc_source,
+                    generated_gml,
+                    georef=False,
+                )
+            if not converted or not generated_gml.exists():
+                st.error("Automatic IFC → CityGML 3.0 preparation failed.")
+                st.code(
+                    conversion_log[-12000:]
+                    if conversion_log
+                    else "No converter log returned."
+                )
+                return
+            if "skipped" in conversion_log.lower():
+                st.caption("Using cached CityGML; IFC geometry conversion was skipped.")
             source = generated_gml
             source_label = f"Auto-converted from IFC · {ifc_label}"
 
