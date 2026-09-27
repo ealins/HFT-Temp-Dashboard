@@ -17,3 +17,6 @@ simstadt_sandbox/*.db
 simstadt_sandbox/*.db-*
 simstadt_sandbox/*.cache
 simstadt_sandbox/*.jar
+
+# Local IFC → CityGML converter environment
+.tools/
