@@ -185,6 +185,145 @@ def run_real_simstadt(citygml_path: Path, workflow: str, output_dir: Path) -> tu
     return ok, (f"{source}\n{log}" if log else source)
 
 
+def _background_job_file(output_dir: Path) -> Path:
+    return output_dir.parent / "simstadt_job.json"
+
+
+def _pid_alive(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except Exception:
+        return False
+
+
+def start_simstadt_background(citygml_path: Path, workflow: str, output_dir: Path) -> tuple[bool, str]:
+    """Launch the real SimStadt process without blocking Streamlit."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    job_file = _background_job_file(output_dir)
+
+    if job_file.exists():
+        try:
+            old = json.loads(job_file.read_text(encoding="utf-8"))
+            if old.get("state") == "running" and _pid_alive(old.get("pid")):
+                return False, "A SimStadt simulation is already running."
+        except Exception:
+            pass
+
+    command, source = discover_simstadt()
+    if not command:
+        return False, (
+            "No SimStadt executable or Docker installation was found. "
+            "Set SIMSTADT_COMMAND / SIMSTADT_EXECUTABLE, or install the SimStadt Docker image."
+        )
+
+    summary_path = output_dir / "simstadt_summary.csv"
+    if source == "docker":
+        cmd = [
+            command, "run", "--rm",
+            "-v", f"{citygml_path.parent.resolve()}:/data",
+            "-e", "LOCALE=en_GB",
+            "simstadt/simstadt",
+            "simstadt", workflow, f"/data/{citygml_path.name}",
+            "-p", "/data/output",
+            "--files", "--csv-export",
+            "-s", f"/data/output/{summary_path.name}",
+        ]
+    else:
+        cmd = [
+            command, workflow, str(citygml_path),
+            "-p", str(output_dir),
+            "--files", "--csv-export",
+            "-s", str(summary_path),
+        ]
+
+    log_path = output_dir.parent / "simstadt_worker.log"
+    for child in output_dir.iterdir():
+        if child.is_file():
+            child.unlink()
+        elif child.is_dir():
+            shutil.rmtree(child, ignore_errors=True)
+
+    log = log_path.open("w", encoding="utf-8")
+    proc = subprocess.Popen(
+        cmd,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+        text=True,
+    )
+    log.close()
+
+    job = {
+        "state": "running",
+        "pid": proc.pid,
+        "workflow": workflow,
+        "source": source,
+        "started_at": pd.Timestamp.utcnow().isoformat(),
+        "input": str(citygml_path),
+        "output": str(output_dir),
+        "log": str(log_path),
+        "returncode": None,
+    }
+    job_file.write_text(json.dumps(job, indent=2), encoding="utf-8")
+    return True, f"Started SimStadt {workflow} in the background."
+
+
+def get_simstadt_background_status(output_dir: Path) -> dict:
+    job_file = _background_job_file(output_dir)
+    if not job_file.exists():
+        return {"state": "idle"}
+
+    try:
+        job = json.loads(job_file.read_text(encoding="utf-8"))
+    except Exception:
+        return {"state": "starting"}
+
+    if job.get("state") == "running":
+        pid = job.get("pid")
+        if _pid_alive(pid):
+            return job
+        job["state"] = "finished" if job.get("returncode") == 0 else "failed"
+        job_file.write_text(json.dumps(job, indent=2), encoding="utf-8")
+
+    try:
+        job["log_tail"] = Path(job.get("log", "")).read_text(
+            encoding="utf-8", errors="replace"
+        )[-12000:]
+    except Exception:
+        job["log_tail"] = ""
+
+    return job
+
+
+def stop_simstadt_background(output_dir: Path) -> tuple[bool, str]:
+    job_file = _background_job_file(output_dir)
+    status = get_simstadt_background_status(output_dir)
+    pid = status.get("pid")
+    if status.get("state") != "running" or not pid:
+        return False, "No running SimStadt simulation was found."
+
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
+            )
+        else:
+            os.kill(int(pid), 15)
+        status["state"] = "cancelled"
+        status["returncode"] = -15
+        job_file.write_text(json.dumps(status, indent=2), encoding="utf-8")
+        return True, "SimStadt cancellation requested."
+    except Exception as exc:
+        return False, f"Could not stop SimStadt: {exc}"
+
+
+
 # ---------------------------------------------------------------------------
 # Validation helpers
 # ---------------------------------------------------------------------------
