@@ -324,6 +324,79 @@ def stop_simstadt_background(output_dir: Path) -> tuple[bool, str]:
 
 
 
+def _render_simstadt_completed_results(
+    output_dir: Path,
+    temp_df: pd.DataFrame,
+    co2_df: pd.DataFrame,
+    stats: dict,
+    threshold: float,
+):
+    status = get_simstadt_background_status(output_dir)
+    state = status.get("state", "idle")
+
+    if state == "running":
+        st.info("SimStadt is running in the background. Streamlit remains responsive.")
+        with st.expander("Live SimStadt output", expanded=False):
+            st.code(status.get("log_tail", "") or "Waiting for SimStadt output…")
+        return
+
+    if state == "finished":
+        log = status.get("log_tail", "")
+        st.success("SimStadt workflow completed.")
+        with st.expander("SimStadt output", expanded=False):
+            st.code(log or "No textual output returned.")
+
+        files = [p for p in output_dir.rglob("*") if p.is_file()]
+        if files:
+            st.dataframe(
+                pd.DataFrame([
+                    {
+                        "File": p.name,
+                        "Type": p.suffix.lower() or "file",
+                        "Size": f"{p.stat().st_size / 1024:.1f} KB",
+                    }
+                    for p in files
+                ]),
+                width="stretch",
+                hide_index=True,
+            )
+            for p in files:
+                if p.suffix.lower() == ".csv":
+                    try:
+                        df = _read_simstadt_csv(p)
+                    except Exception:
+                        continue
+                    with st.expander(f"Result · {p.name}", expanded=False):
+                        st.dataframe(df.head(1000), width="stretch", hide_index=True)
+                        st.download_button(
+                            f"Download {p.name}",
+                            p.read_bytes(),
+                            file_name=p.name,
+                            key=f"sim_result_{p.name}_{p.stat().st_mtime_ns}",
+                        )
+
+        render_validation(
+            output_dir,
+            temp_df,
+            co2_df,
+            stats,
+            threshold,
+            log,
+        )
+        return
+
+    if state in {"failed", "cancelled"}:
+        st.error(f"SimStadt job state: {state}.")
+        with st.expander("SimStadt diagnostics", expanded=True):
+            st.code(status.get("log_tail", "") or "No worker output returned.")
+        return
+
+    if state == "idle":
+        st.caption("No SimStadt simulation is currently running.")
+
+
+
+
 # ---------------------------------------------------------------------------
 # Validation helpers
 # ---------------------------------------------------------------------------
