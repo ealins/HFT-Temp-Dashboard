@@ -1,324 +1,288 @@
 # HFT Temperature & CO₂ Dashboard
 
-The **HFT Temperature & CO₂ Dashboard** is a Streamlit web application for monitoring, analyzing, and visualizing indoor climate data (Temperature and CO₂) across HFT buildings, floors, and rooms.
+A web-based dashboard for monitoring, exploring, and analysing indoor **Temperature** and **CO₂** conditions across buildings, floors, and rooms.
 
-The application combines sensor analytics with IFC-based building context and an optional **SimStadt energy-analysis workflow**. The dashboard is designed to keep interactive Streamlit use responsive while longer simulation jobs run separately.
+The dashboard combines sensor data with **IFC building models**, interactive 3D room context, floor plans, and optional **SimStadt** energy and environmental analysis.
 
-## 🚀 Key Functions & Features
+## Features
 
-### 1. Data Visualization & Analytics
+### Indoor Climate Monitoring
 
-- **Unified Dashboard**: View Temperature and CO₂ metrics with Normal and Technical viewing modes.
-- **Hierarchical Navigation**: Filter by **Building → Floor → Room**.
-- **Time-Series Charts**: Interactive Temperature and CO₂ timelines with comfort/IAQ reference bands and visible data gaps.
-- **Carpet Plots (Heatmaps)**: Inspect recurring daily/weekly patterns by day and hour.
-- **Distribution & Gap Statistics**: Review distributions, completeness, and sensor coverage.
-- **Sensor-derived conditions for simulation**:
-  - mean and percentile Temperature,
-  - mean and P95 indoor CO₂,
-  - an occupancy proxy based on a configurable CO₂ threshold,
-  - an explicitly labelled CO₂-decay ACH diagnostic proxy.
+- Monitor Temperature and indoor CO₂ for individual rooms, floors, or buildings.
+- Navigate through **Building → Floor → Room**.
+- Explore interactive time-series charts.
+- Identify recurring patterns using daily/hourly heatmaps.
+- Review basic statistics, distributions, and data gaps.
+- Use configurable comfort and indoor-air-quality reference thresholds.
 
-> **Important:** the ACH value is a diagnostic proxy from observed CO₂ decay. It is **not** presented as a DIN-compliant or native SimStadt ventilation calculation.
+### 3D Building Model
 
-### 2. 3D IFC Model Viewer
+Upload and explore IFC/IFCZIP building models directly in the dashboard.
 
-- **Interactive 3D Context**: Renders mapped spaces from uploaded IFC/IFCZIP BIM models.
-- **Climate Coloring**: Colors mapped rooms from the latest Temperature/CO₂ observations.
-- **Viewer Scopes**: Room, Floor, or Exploded building views.
-- **Layer Management**: Toggle registered model roles such as Architecture, HVAC, Structure, and Electrical.
-- **Space Mapping**: Associate IFC spaces with dashboard Building/Floor/Room identifiers.
+- View building spaces in 3D.
+- Navigate by room, floor, or building.
+- Inspect room names and mapped locations.
+- Colour rooms using recent sensor observations.
+- Manage multiple model layers such as Architecture, HVAC, Structure, and Electrical.
 
-### 3. 2D Floor Plan References
+### 2D Floor Plans
 
-- **PDF Layouts**: Upload and view per-floor 2D reference plans.
-- **Side-by-Side Context**: Compare the selected floor's IFC-based 3D view with the native PDF floor plan.
+Upload PDF floor plans and associate them with buildings and floors.
 
-### 4. Admin & Data Management
+The dashboard can show the floor plan together with the corresponding 3D model to provide both 2D and 3D spatial context.
 
-- **Password-Protected Admin Panel**: Manage uploads, mappings, and configuration.
-- **Data Ingestion**: Upload Temperature Excel files and CO₂ CSV/data files.
-- **Sensor Mapping**: Map raw sensor IDs to physical Building/Floor/Room locations.
-- **IFC Model Management**: Upload `.ifc` or `.ifczip` models, assign buildings and discipline/role metadata, and maintain active model selection.
-- **Floor Plan Management**: Assign reference PDF floor plans to buildings and floors.
+### Data Management
 
-### 5. SimStadt Energy & Environmental Sandbox
+An administrative interface allows authorised users to:
 
-The dashboard now contains a real SimStadt integration under the **Dashboard View / SimStadt Sandbox** workflow.
+- Upload Temperature and CO₂ datasets.
+- Map sensor identifiers to Building/Floor/Room locations.
+- Register IFC/IFCZIP building models.
+- Configure model roles and active models.
+- Associate PDF floor plans with buildings and floors.
 
-The current simulation scope is intentionally limited to:
+## SimStadt Analysis
 
-| Workflow | Purpose |
+The dashboard can be used together with **SimStadt** for building energy and environmental analysis.
+
+Available workflows:
+
+| Workflow | Description |
 |---|---|
-| **Heat Demand** | Annual/building heating-demand analysis |
-| **Hourly Heat Demand** | Time-resolved heat-demand analysis |
-| **Environmental / CO₂ Analysis** | Energy/environmental analysis including CO₂ emissions |
+| **Heat Demand** | Analyse annual building heating demand |
+| **Hourly Heat Demand** | Analyse time-dependent heating demand |
+| **Environmental / CO₂ Analysis** | Analyse environmental and CO₂-emission results |
 
-**PV potential** and **Refurbishment** workflows are not part of the current dashboard scope.
+### IFC to CityGML
 
-#### Automatic IFC → CityGML 3.0 conversion
+When an appropriate Architecture IFC is available, the dashboard can prepare a **CityGML 3.0** model for SimStadt automatically.
 
-When no CityGML input is supplied manually, the Sandbox:
+An existing CityGML model can also be supplied directly.
 
-1. Finds the active **Architecture IFC** registered for the selected building.
-2. Converts that IFC automatically to **CityGML 3.0**.
-3. Reuses the generated CityGML when the IFC has not changed.
-4. Passes the resulting CityGML model to SimStadt.
+### Sensor Data and Simulation
 
-The conversion uses the **TUM-GIS IFC-to-CityGML 3.0 converter**. It can be provided as a local executable through `IFC2CITYGML_COMMAND` or discovered through Docker.
+Temperature and indoor CO₂ observations can provide useful measured building-condition information for interpreting simulation results.
 
-The generated CityGML is kept in the temporary SimStadt run workspace rather than replacing the source IFC.
+The dashboard can summarise:
 
-#### SimStadt backend discovery
+- observed mean and percentile Temperature,
+- observed indoor CO₂ levels,
+- an occupancy indicator derived from CO₂,
+- a diagnostic CO₂-decay ventilation indicator.
 
-The application checks for a SimStadt backend in this order:
+These measurements can be used alongside simulation results for comparison and interpretation.
 
-- `SIMSTADT_COMMAND`
-- local `simstadt` / `simstadtpy` executable
-- `SIMSTADT_EXECUTABLE` / `SIMSTADT_HOME`
-- Docker
+> **Important:** indoor CO₂ concentration is measured in **ppm**, while environmental CO₂ results from energy analysis represent emissions. They are different physical quantities and should not be compared as the same variable.
 
-This means SimStadt is **not bundled in the Python requirements**. A separate local installation or Docker runtime is required to execute the actual simulation.
+## Getting Started
 
-#### Non-blocking simulation execution
+### Requirements
 
-Long SimStadt calculations are launched as a background process instead of blocking the Streamlit request.
+For the basic dashboard:
 
-The Sandbox provides:
+- Python 3.12 recommended
+- A modern web browser
 
-- **Start SimStadt in background**
-- live worker-log polling
-- **Stop** control
-- job-state tracking
-- automatic detection of completed output files
-- result-table rendering
-- downloadable result CSVs
+For IFC functionality:
 
-Simulation state is recorded in the temporary run directory using a job JSON file and worker log.
+- IFC/IFCZIP building models
+- IFC files containing usable `IfcSpace` information for room-level visualisation
 
-#### Automatic sensor validation
+For SimStadt analysis:
 
-After a completed simulation, the dashboard extracts available SimStadt CSV outputs and presents:
+- A working SimStadt installation or compatible execution environment
+- CityGML input, or an IFC model that can be converted to CityGML
 
-- SimStadt headline heating-demand values when available,
-- observed HFT Temperature statistics,
-- observed HFT CO₂ statistics,
-- occupancy proxy,
-- ACH-decay diagnostic proxy,
-- direct hourly MAE/RMSE/bias/R² metrics **only when the SimStadt output contains a comparable physical variable**.
+### Installation
 
-The validation deliberately does **not** compare indoor CO₂ concentration (ppm) directly with SimStadt CO₂ emissions, because they represent different physical quantities.
+Clone the repository:
 
-For direct energy validation, measured heating/energy consumption data (for example kWh by hour or year) should be added to the project.
-
-## 📖 User Guide
-
-### 1. Navigating to a Room
-
-1. Select a **Building**.
-2. Select a **Floor**.
-3. Select a **Room**.
-
-All dashboard charts, IFC context, and Sandbox selections follow the current location.
-
-### 2. Normal vs. Technical View
-
-- **Normal View**: Focuses on quick comfort and IAQ checks.
-- **Technical View**: Shows detailed time series, heatmaps, distributions, and statistics.
-
-### 3. Using the 3D Model
-
-Open the **3D** view to inspect the selected building/floor/room in IFC context.
-
-Rooms with valid IFC space geometry can be colored using the latest sensor observations. Federated IFC files can be registered as separate model-role layers.
-
-### 4. Running the SimStadt Sandbox
-
-1. Select the required **Building / Floor / Room**.
-2. Open the **SimStadt Sandbox** view.
-3. Review the detected IFC and SimStadt backend.
-4. Either provide an existing CityGML path or let the Sandbox automatically convert the active Architecture IFC.
-5. Select:
-   - Heat Demand,
-   - Hourly Heat Demand, or
-   - Environmental / CO₂ Analysis.
-6. Start the simulation.
-7. The simulation continues in the background while the Streamlit page remains responsive.
-8. Review SimStadt outputs and the automatic sensor-validation section.
-
-### 5. CityGML Input
-
-A manually supplied CityGML file should be accessible from the same execution host/container that runs the dashboard and SimStadt.
-
-The Sandbox accepts an existing CityGML path or can generate one automatically from the active Architecture IFC.
-
-## 🛠 Installation & Local Development
-
-### Python / Streamlit
-
-Recommended local setup:
-
-```powershell
+~~~text
 git clone https://github.com/ealins/HFT-Temp-Dashboard.git
 cd HFT-Temp-Dashboard
+~~~
 
+Create a Python environment:
+
+**Windows / PowerShell**
+
+~~~text
 py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
+.\\.venv\\Scripts\\Activate.ps1
+~~~
 
+**Linux / macOS**
+
+~~~text
+python3.12 -m venv .venv
+source .venv/bin/activate
+~~~
+
+Install the dependencies:
+
+~~~text
 python -m pip install --upgrade pip
 pip install -r requirements.txt
+~~~
 
+Start the dashboard:
+
+~~~text
 streamlit run app.py
-```
+~~~
 
-Then open:
+Open:
 
-```text
+~~~text
 http://localhost:8501
-```
+~~~
 
-### Docker
+## Using the Dashboard
 
-Build and start the dashboard:
+### 1. Select a Location
 
-```bash
-docker compose up --build
-```
+Choose:
 
-Then open:
+1. Building
+2. Floor
+3. Room
 
-```text
-http://localhost:8501
-```
+The selected location controls the sensor charts, statistics, IFC context, and available analysis options.
 
-The `./data:/app/data` volume persists dashboard databases, mappings, IFC models, and extracted model geometry.
+### 2. Explore Indoor Climate
 
-> **Docker note for SimStadt:** the dashboard image itself does not install SimStadt. The SimStadt Sandbox needs a SimStadt-capable execution environment and access to Docker or a local SimStadt executable. On a self-hosted Docker/Windows setup, the Sandbox can call the Docker engine from the dashboard host.
+Use the Temperature and CO₂ views to:
 
-## 🔧 Optional Environment Variables
+- inspect historical conditions,
+- identify peaks and unusual periods,
+- examine daily and hourly patterns,
+- evaluate data completeness,
+- compare rooms within a building.
 
-The Sandbox supports explicit backend configuration when automatic discovery is not sufficient:
+### 3. Explore the Building Model
 
-```text
-SIMSTADT_COMMAND=<path or command for SimStadt>
-SIMSTADT_EXECUTABLE=<path to SimStadt executable>
-SIMSTADT_HOME=<SimStadt installation path>
+Open the 3D view to inspect the selected area in its BIM/IFC context.
 
-IFC2CITYGML_COMMAND=<path or command for IFC-to-CityGML converter>
-```
+For best room-level results, IFC models should contain properly defined `IfcSpace` elements with meaningful room/storey information.
 
-The documented Docker image used by the IFC-to-CityGML integration is:
+### 4. Add Floor Plans
 
-```text
-ghcr.io/tum-gis/ifc-to-citygml3:latest
-```
+Upload a PDF floor plan and assign it to the appropriate building and floor. The floor plan can then be used as a 2D reference alongside the 3D model.
 
-## 📁 Technical Architecture & Workflow
+### 5. Run SimStadt Analysis
 
-```text
-HFT Sensors
-   │
-   ├── Temperature ───────────────┐
-   └── Indoor CO₂ ────────────────┤
-                                  ▼
-                         Streamlit Dashboard
-                                  │
-                     ┌────────────┴────────────┐
-                     │                         │
-                     ▼                         ▼
-                IFC Registry              Sensor Analytics
-                     │                         │
-              Active Architecture IFC         ├─ Occupancy proxy
-                     │                         ├─ CO₂ decay diagnostic
-                     ▼                         └─ Validation conditions
-              IFC → CityGML 3.0
-                     │
-                     ▼
-                SimStadt
-                     │
-          ┌──────────┼─────────────┐
-          ▼          ▼             ▼
-      HeatDemand  HourlyHeatDemand  EnvironmentalAnalysis
-          │          │             │
-          └──────────┴─────────────┘
-                     ▼
-              CSV / Summary Results
-                     │
-                     ▼
-             Automatic validation
-```
+From the SimStadt analysis view:
 
-### IFC processing
+1. Select the building and location of interest.
+2. Provide an existing CityGML model or use the available IFC model as the source.
+3. Select the required workflow:
+   - Heat Demand
+   - Hourly Heat Demand
+   - Environmental / CO₂ Analysis
+4. Start the analysis.
+5. Review the generated simulation results.
+6. Compare the results with the available measured building conditions.
 
-IfcOpenShell extracts:
+Long analyses can continue while the dashboard remains usable, and the results can be inspected from the dashboard when processing is complete.
+
+## Data Preparation
+
+### Temperature Data
+
+Temperature data should contain timestamps and measured values and should be associated with the relevant sensor/location mapping.
+
+For meaningful temporal analysis, regular or sufficiently frequent observations are recommended.
+
+### CO₂ Data
+
+CO₂ data should contain timestamps and measured indoor CO₂ concentration values in **ppm**.
+
+The dashboard can use these observations to identify periods of elevated CO₂ and derive a simple occupancy indicator.
+
+### IFC Models
+
+The dashboard supports IFC-based building context and room visualisation.
+
+For useful room-level mapping, IFC models should include:
 
 - `IfcProject`
 - `IfcBuilding`
 - `IfcBuildingStorey`
 - `IfcSpace`
 
-and stores extracted space geometry for the 3D dashboard viewer.
+Consistent storey and room naming makes sensor-to-model mapping easier.
 
-Persistent IFC data is stored under:
+## Docker
 
-```text
-data/ifc_models/
-data/ifc_models.db
-```
+The dashboard can also be run with Docker:
 
-The default per-file upload limit is 500 MB; adjust Streamlit upload settings for larger models.
+~~~text
+docker compose up --build
+~~~
 
-Architecture IFCs normally need modeled `IfcSpace` solids for room-level visualization. Non-architecture federated files can be registered and displayed as layers when they contain usable `IfcSpace` geometry.
+Then open:
 
-### Simulation workspace
+~~~text
+http://localhost:8501
+~~~
 
-SimStadt runs use a temporary workspace beneath the operating system's temporary directory:
+The project stores persistent dashboard data in the \`data/\` directory.
 
-```text
-hft_simstadt_runs/
-  <building>/
-    <floor>/
-      <generated-or-supplied CityGML>
-      output/
-      simstadt_job.json
-      simstadt_worker.log
-```
+## Typical Use Cases
 
-The generated CityGML is refreshed when its source IFC is newer.
+The dashboard can support:
 
-### Git Repository
+- indoor climate monitoring,
+- thermal-condition assessment,
+- indoor-air-quality analysis,
+- sensor quality and data-completeness checks,
+- room-by-room building analysis,
+- BIM-assisted facility management,
+- measured-vs-simulated building analysis,
+- building energy and environmental studies,
+- research and teaching demonstrations involving BIM, sensors, and urban/building analysis.
 
-This repository tracks the production code on the `main` branch.
+## Outputs
 
-Before running a local checkout after repository-side updates:
+Depending on the enabled functions, users can obtain:
 
-```powershell
-git switch main
-git pull origin main
-```
+- interactive Temperature charts,
+- interactive CO₂ charts,
+- heatmaps,
+- room and building statistics,
+- 3D IFC visualisation,
+- floor-plan references,
+- SimStadt heating-demand results,
+- hourly heating-demand results,
+- environmental/CO₂-emission results,
+- downloadable analysis tables and simulation outputs.
 
-## ⚠️ Important Scope & Validation Notes
+## Data and Privacy
 
-- SimStadt requires a valid CityGML model and its required simulation inputs/assumptions; IFC → CityGML conversion alone does not guarantee that every energy-model parameter is fully populated.
-- Sensor Temperature and indoor CO₂ data are useful for boundary-condition diagnostics and validation, but they are not a substitute for all native SimStadt weather, usage, construction, and energy-meter inputs.
-- Indoor CO₂ is measured in **ppm**. Environmental-analysis CO₂ from SimStadt represents **emissions**, so they must not be treated as the same variable.
-- For a robust measured-vs-simulated energy comparison, add measured heating/energy consumption data.
-- Long-running background execution is intended primarily for self-hosted/local environments where the dashboard process is allowed to launch child processes. Managed Streamlit hosting may require a separate worker service instead.
+The dashboard is intended to operate on building and sensor datasets supplied by the deployment owner.
 
-## 📚 Related Technical Resources
+When using real building or occupancy-related data, ensure that the dataset and deployment comply with the applicable institutional, contractual, and data-protection requirements.
 
-- **TUM-GIS IFC → CityGML 3.0**: https://github.com/tum-gis/ifc-to-citygml3
-- **SimStadt**: https://simstadt.hft-stuttgart.de/
-- **If you use the Docker-based IFC converter**, ensure Docker is available to the dashboard host and that the generated CityGML output directory is writable.
+## Technical Resources
 
-## 📝 Upgrade / Existing Data
+- **TUM-GIS IFC → CityGML 3.0:** https://github.com/tum-gis/ifc-to-citygml3
+- **SimStadt:** https://simstadt.hft-stuttgart.de/
 
-Keep your existing:
+## Project Structure
 
-- `.streamlit/secrets.toml`
-- `data/*.db`
-- `data/ifc_models/`
+The main application is started with:
 
-when updating an existing deployment, unless you intentionally want to replace the stored configuration or model registry.
+~~~text
+app.py
+~~~
 
-If no representative project IFC is supplied with an upgrade, validate coordinate alignment, space naming, model geometry, SimStadt input completeness, and execution performance with actual HFT models before production rollout.
+Core functionality is organised into modules for:
+
+- dashboard and sensor analysis,
+- IFC model management and visualisation,
+- data ingestion and storage,
+- SimStadt analysis.
+
+## License
+
+See the repository license and included project files for the applicable terms.
