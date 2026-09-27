@@ -93,6 +93,22 @@ For SimStadt analysis:
 - A working SimStadt installation or compatible execution environment
 - CityGML input, or an IFC model that can be converted to CityGML
 
+### Recommended IFC → CityGML setup
+
+For Windows users, the recommended route is the **direct local TUM-GIS converter**. It avoids Docker startup and file-mount overhead and lets the dashboard reuse a cached CityGML model when the source IFC has not changed.
+
+Run once from the repository root:
+
+~~~text
+powershell -ExecutionPolicy Bypass -File .\\scripts\\setup_ifc2citygml.ps1
+~~~
+
+The setup creates a dedicated converter environment under the local `.tools/` directory. The dashboard then detects it automatically.
+
+Docker remains available as a fallback when the local converter is not installed.
+
+The dashboard caches each IFC → CityGML conversion using the source file timestamp/size and converter version. Re-running an unchanged model therefore does not repeat the expensive geometry conversion.
+
 ### Installation
 
 Clone the repository:
