@@ -249,6 +249,46 @@ def discover_citygml_inputs(building: str, floor: str) -> list[Path]:
     ]
     return sorted(filtered or candidates)
 
+def discover_ifc_converter() -> tuple[str | None, str]:
+    """Find the TUM IFC→CityGML 3.0 converter via Docker or a local checkout."""
+    env = os.getenv("IFC2CITYGML_COMMAND", "").strip()
+    if env:
+        return env, "IFC2CITYGML_COMMAND"
+    for name in ("ifc2citygml",):
+        found = shutil.which(name)
+        if found:
+            return found, "local executable"
+    docker = shutil.which("docker")
+    if docker:
+        return docker, "docker"
+    return None, ""
+
+
+def convert_ifc_to_citygml(ifc_path: Path, output_path: Path, georef: bool = False) -> tuple[bool, str]:
+    """Run TUM-GIS IFC→CityGML 3.0 converter; preserve IFC properties/references."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    command, source = discover_ifc_converter()
+    if not command:
+        return False, "No IFC→CityGML converter or Docker runtime was detected."
+
+    if source == "docker":
+        # TUM-GIS publishes a ready-to-run multi-arch image.
+        cmd = [
+            command, "run", "--rm",
+            "-v", f"{ifc_path.parent.resolve()}:/app",
+            "ghcr.io/tum-gis/ifc-to-citygml3:latest",
+            f"/app/{ifc_path.name}",
+            "-o", f"/app/{output_path.name}",
+        ]
+        if georef:
+            cmd.append("--georef-oktoberfest")
+    else:
+        cmd = [command, str(ifc_path), "-o", str(output_path)]
+        if georef:
+            cmd.append("--georef-oktoberfest")
+
+    return _run_command(cmd, timeout_s=1800)
+
 
 # ---------------------------------------------------------------------------
 # UI
@@ -376,15 +416,82 @@ def render_simstadt_sandbox(
         )
 
         candidate_paths = discover_citygml_inputs(building, floor)
+        ifc_models = []
+        try:
+            from temperature_dashboard.ifc_models import list_models
+            registered = list_models(building=building, active_only=True)
+            if not registered.empty:
+                ifc_models = [
+                    Path(str(row["filename"])) for _, row in registered.iterrows()
+                ]
+        except Exception:
+            registered = pd.DataFrame()
         options = [str(p) for p in candidate_paths]
         selected = st.selectbox(
             "Existing CityGML input",
             ["None / provide path"] + options,
             key="sim_citygml_choice",
         )
+
+        st.markdown("**IFC → CityGML 3.0 conversion**")
+        registered_files = []
+        if not registered.empty:
+            registered_files = [
+                str(Path("data") / str(row["stored_filename"]))
+                for _, row in registered.iterrows()
+                if row.get("stored_filename")
+            ]
+        converter, converter_source = discover_ifc_converter()
+        if converter:
+            st.success(f"IFC→CityGML converter detected: {converter_source}")
+        else:
+            st.warning("No IFC→CityGML conversion backend detected. Docker is the easiest route.")
+
+        if registered_files:
+            selected_ifc = st.selectbox(
+                "Registered IFC model",
+                ["None"] + registered_files,
+                key="sim_ifc_source",
+            )
+            georef_ifc = st.checkbox(
+                "Apply TUM-GIS Munich fallback georeferencing",
+                value=False,
+                help="Use only when your IFC has no usable georeferencing. The converter's documented fallback targets EPSG:25832 at Theresienwiese, Munich.",
+                key="sim_ifc_georef",
+            )
+            if st.button("Convert selected IFC → CityGML 3.0", key="sim_ifc_convert", type="primary"):
+                if selected_ifc == "None":
+                    st.warning("Select an IFC model first.")
+                else:
+                    ifc_source = Path(selected_ifc)
+                    if not ifc_source.is_absolute():
+                        ifc_source = Path.cwd() / ifc_source
+                    output_gml = Path(tempfile.gettempdir()) / "hft_simstadt_runs" / building / floor / f"{ifc_source.stem}.gml"
+                    with st.spinner("Converting IFC to CityGML 3.0 with TUM-GIS…"):
+                        ok, log = convert_ifc_to_citygml(ifc_source, output_gml, georef_ifc)
+                    if ok and output_gml.exists():
+                        st.session_state["sim_citygml_generated"] = str(output_gml)
+                        st.success(f"CityGML generated: {output_gml}")
+                        st.download_button(
+                            "Download generated CityGML",
+                            output_gml.read_bytes(),
+                            file_name=output_gml.name,
+                            mime="application/gml+xml",
+                            key=f"download_gml_{output_gml.stat().st_mtime_ns}",
+                        )
+                    else:
+                        st.error("IFC→CityGML conversion failed.")
+                        st.code(log[-12000:] if log else "No converter log returned.")
+        generated_path = st.session_state.get("sim_citygml_generated", "")
+        if generated_path and Path(generated_path).exists():
+            st.info(f"Using newly generated CityGML: {generated_path}")
+            custom_path_default = generated_path
+        else:
+            custom_path_default = "" if selected == "None / provide path" else selected
+
         custom_path = st.text_input(
             "CityGML path",
-            value="" if selected == "None / provide path" else selected,
+            value=custom_path_default,
             key="sim_citygml_path",
             help="Path visible to the Streamlit/SimStadt execution host.",
         )
