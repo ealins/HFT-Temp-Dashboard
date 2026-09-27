@@ -126,6 +126,19 @@ def discover_simstadt() -> tuple[str | None, str]:
     if exe:
         return str(exe), "local executable"
 
+    # Common Windows installations/downloads. SimStadt.bat supports CLI mode
+    # when called with a path/workflow argument.
+    common_roots = [
+        Path.home() / "Desktop",
+        Path.home() / "Downloads",
+        Path(os.getenv("SIMSTADT_HOME", "")) if os.getenv("SIMSTADT_HOME") else None,
+    ]
+    for root in common_roots:
+        if root and root.exists():
+            matches = sorted(root.glob("SimStadt*/SimStadt.bat"))
+            if matches:
+                return str(matches[0]), "SimStadt.bat"
+
     try:
         import importlib.util
         if importlib.util.find_spec("simstadt") is not None:
@@ -150,6 +163,12 @@ def _local_simstadt_command(
     if source == "python module":
         return [
             command, "-m", "simstadt", workflow, str(citygml_path),
+            "-p", str(output_dir), "--files", "--csv-export",
+            "-s", str(summary_path),
+        ]
+    if source == "SimStadt.bat":
+        return [
+            command, str(citygml_path),
             "-p", str(output_dir), "--files", "--csv-export",
             "-s", str(summary_path),
         ]
@@ -196,8 +215,9 @@ def start_simstadt_background(citygml_path: Path, workflow: str, output_dir: Pat
     command, source = discover_simstadt()
     if not command:
         return False, (
-            "No SimStadt executable or Docker installation was found. "
-            "Set SIMSTADT_COMMAND / SIMSTADT_EXECUTABLE, or install the SimStadt Docker image."
+            "No SimStadt runtime was found. Install SimStadt locally with "
+            "scripts/setup_simstadt.ps1, set SIMSTADT_COMMAND/SIMSTADT_HOME, "
+            "or install Docker Desktop as the bundled runtime fallback."
         )
 
     summary_path = output_dir / "simstadt_summary.csv"
@@ -213,12 +233,9 @@ def start_simstadt_background(citygml_path: Path, workflow: str, output_dir: Pat
             "-s", f"/data/output/{summary_path.name}",
         ]
     else:
-        cmd = [
-            command, workflow, str(citygml_path),
-            "-p", str(output_dir),
-            "--files", "--csv-export",
-            "-s", str(summary_path),
-        ]
+        cmd = _local_simstadt_command(
+            command, source, workflow, citygml_path, output_dir, summary_path
+        )
 
     log_path = output_dir.parent / "simstadt_worker.log"
     for child in output_dir.iterdir():
