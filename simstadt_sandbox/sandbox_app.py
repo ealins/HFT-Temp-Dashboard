@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -213,9 +214,18 @@ def _read_simstadt_csv(path: Path) -> pd.DataFrame:
 
 def collect_simstadt_csvs(output_dir: Path) -> list[Path]:
     files = []
-    for p in output_dir.rglob("*.csv"):
-        if p.is_file() and p.name.lower() != "sensor_validation.csv":
-            files.append(p)
+    roots = [output_dir, Path(str(output_dir) + ".proj"), output_dir.parent]
+    seen = set()
+    for root in roots:
+        if not root.exists():
+            continue
+        for p in root.rglob("*.csv"):
+            if not p.is_file() or p.name.lower() == "sensor_validation.csv":
+                continue
+            resolved = str(p.resolve())
+            if resolved not in seen:
+                seen.add(resolved)
+                files.append(p)
     return sorted(files, key=lambda p: (p.stat().st_mtime_ns, str(p)))
 
 
@@ -230,12 +240,22 @@ def parse_simstadt_summary(log: str) -> dict:
         "year_of_construction": r"Year of construction\s*:\s*([\d.,]+)",
     }
     out = {}
+    def parse_number(raw: str) -> float:
+        text = str(raw).strip().replace(" ", "")
+        if "," in text and "." in text:
+            if text.rfind(",") > text.rfind("."):
+                text = text.replace(".", "").replace(",", ".")
+            else:
+                text = text.replace(",", "")
+        elif "," in text:
+            text = text.replace(",", ".")
+        return float(text)
+
     for key, pattern in patterns.items():
         match = re.search(pattern, log or "", flags=re.IGNORECASE)
         if match:
-            value = match.group(1).replace(".", "").replace(",", ".")
             try:
-                out[key] = float(value)
+                out[key] = parse_number(match.group(1))
             except ValueError:
                 pass
     return out
