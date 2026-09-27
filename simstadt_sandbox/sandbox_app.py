@@ -286,7 +286,14 @@ def get_simstadt_background_status(output_dir: Path) -> dict:
         pid = job.get("pid")
         if _pid_alive(pid):
             return job
-        job["state"] = "finished" if job.get("returncode") == 0 else "failed"
+
+        output_dir = Path(job.get("output", ""))
+        successful_outputs = (
+            (output_dir / "simstadt_summary.csv").exists()
+            or any(output_dir.rglob("*.csv"))
+        )
+        job["state"] = "finished" if successful_outputs else "failed"
+        job["returncode"] = 0 if successful_outputs else -1
         job_file.write_text(json.dumps(job, indent=2), encoding="utf-8")
 
     try:
