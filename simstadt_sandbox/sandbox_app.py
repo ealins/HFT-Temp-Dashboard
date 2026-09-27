@@ -110,6 +110,50 @@ def _first_existing(paths: list[str]) -> Path | None:
     return None
 
 
+def _simstadt_max_ram() -> str:
+    """Choose a conservative JVM heap cap so SimStadt cannot starve Streamlit."""
+    configured = os.getenv("SIMSTADT_MAX_RAM", "").strip()
+    if configured:
+        return configured
+
+    try:
+        if os.name == "nt":
+            import ctypes
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+            status = MEMORYSTATUSEX()
+            status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                total_gb = status.ullTotalPhys / (1024 ** 3)
+                if total_gb <= 8:
+                    return "2g"
+                if total_gb <= 16:
+                    return "3g"
+                return "4g"
+    except Exception:
+        pass
+
+    return "4g"
+
+
+def _simstadt_environment() -> dict[str, str]:
+    env = os.environ.copy()
+    env["MAX_RAM"] = _simstadt_max_ram()
+    env.setdefault("LOCALE", "en_GB")
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    return env
+
+
 def discover_simstadt() -> tuple[str | None, str]:
     """Prefer the local simstadt CLI, then Docker."""
     env = os.getenv("SIMSTADT_COMMAND", "").strip()
@@ -179,8 +223,18 @@ def _local_simstadt_command(
     ]
 
 
-def _run_command(command: list[str], timeout_s: int = 900) -> tuple[bool, str]:
-    proc = subprocess.run(command, capture_output=True, text=True, timeout=timeout_s)
+def _run_command(
+    command: list[str],
+    timeout_s: int = 900,
+    env: dict[str, str] | None = None,
+) -> tuple[bool, str]:
+    proc = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=timeout_s,
+        env=env or _simstadt_environment(),
+    )
     text = (proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")
     return proc.returncode == 0, text.strip()
 
@@ -245,14 +299,22 @@ def start_simstadt_background(citygml_path: Path, workflow: str, output_dir: Pat
             shutil.rmtree(child, ignore_errors=True)
 
     log = log_path.open("w", encoding="utf-8")
-    proc = subprocess.Popen(
-        cmd,
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        stdin=subprocess.DEVNULL,
-        start_new_session=True,
-        text=True,
-    )
+    popen_kwargs = {
+        "stdout": log,
+        "stderr": subprocess.STDOUT,
+        "stdin": subprocess.DEVNULL,
+        "start_new_session": True,
+        "close_fds": True,
+        "text": True,
+        "env": _simstadt_environment(),
+    }
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = (
+            getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        )
+    proc = subprocess.Popen(cmd, **popen_kwargs)
     log.close()
 
     job = {
@@ -267,7 +329,10 @@ def start_simstadt_background(citygml_path: Path, workflow: str, output_dir: Pat
         "returncode": None,
     }
     job_file.write_text(json.dumps(job, indent=2), encoding="utf-8")
-    return True, f"Started SimStadt {workflow} in the background."
+    return True, (
+        f"Started SimStadt {workflow} in the background "
+        f"(JVM memory cap: {_simstadt_max_ram()})."
+    )
 
 
 def get_simstadt_background_status(output_dir: Path) -> dict:
