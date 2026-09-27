@@ -141,34 +141,23 @@ def _run_simstadt_docker(citygml_path: Path, output_dir: Path, workflow: str) ->
     if not docker:
         return False, "Docker is not available on this dashboard host."
 
-    # SimStadt's documented container exposes workflows such as HeatDemand.
-    # The project folder is mounted read/write so generated outputs remain
-    # accessible to the dashboard.
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = output_dir / "simstadt_summary.csv"
     cmd = [
-        docker,
-        "run",
-        "--rm",
-        "-v",
-        f"{citygml_path.parent.resolve()}:/data",
+        docker, "run", "--rm",
+        "-v", f"{citygml_path.parent.resolve()}:/data",
         "simstadt/simstadt",
-        "simstadt",
-        workflow,
-        f"/data/{citygml_path.name}",
-        "-p",
-        "/data/output",
+        "simstadt", workflow, f"/data/{citygml_path.name}",
+        "-p", "/data/output",
         "--files",
-        "-s",
-        f"/data/{output_dir.name}/results.json",
+        "--csv-export",
+        "-s", f"/data/{output_dir.name}/{summary_path.name}",
     ]
     return _run_command(cmd)
 
 
 def run_real_simstadt(citygml_path: Path, workflow: str, output_dir: Path) -> tuple[bool, str]:
-    """Execute an actual SimStadt workflow when available.
-
-    Local installations can be supplied via SIMSTADT_COMMAND. Docker users can
-    use the official simstadt/simstadt image. No fake result is generated.
-    """
+    """Execute a real SimStadt workflow and request CSV exports when available."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
     command, source = discover_simstadt()
@@ -179,14 +168,272 @@ def run_real_simstadt(citygml_path: Path, workflow: str, output_dir: Path) -> tu
             "Set SIMSTADT_COMMAND / SIMSTADT_EXECUTABLE, or install the SimStadt Docker image.",
         )
 
+    summary_path = output_dir / "simstadt_summary.csv"
     if source == "docker":
         ok, log = _run_simstadt_docker(citygml_path, output_dir, workflow)
     else:
-        cmd = [command, workflow, str(citygml_path), "-p", str(output_dir), "--files"]
+        cmd = [
+            command, workflow, str(citygml_path),
+            "-p", str(output_dir),
+            "--files", "--csv-export",
+            "-s", str(summary_path),
+        ]
         ok, log = _run_command(cmd)
 
     return ok, (f"{source}\n{log}" if log else source)
 
+
+# ---------------------------------------------------------------------------
+# Validation helpers
+# ---------------------------------------------------------------------------
+
+def _normalise_column(name: object) -> str:
+    text = str(name).strip().lower()
+    return "".join(ch for ch in text if ch.isalnum())
+
+
+def _read_simstadt_csv(path: Path) -> pd.DataFrame:
+    """Read SimStadt CSVs across German/English separator and decimal conventions."""
+    attempts = [
+        {"sep": None, "engine": "python"},
+        {"sep": ";", "decimal": ","},
+        {"sep": ",", "decimal": "."},
+    ]
+    last_error = None
+    for kwargs in attempts:
+        try:
+            df = pd.read_csv(path, **kwargs)
+            if df.shape[1] >= 2:
+                df.columns = [str(c).strip() for c in df.columns]
+                return df
+        except Exception as exc:
+            last_error = exc
+    raise ValueError(f"Could not parse {path.name}: {last_error}")
+
+
+def collect_simstadt_csvs(output_dir: Path) -> list[Path]:
+    files = []
+    for p in output_dir.rglob("*.csv"):
+        if p.is_file() and p.name.lower() != "sensor_validation.csv":
+            files.append(p)
+    return sorted(files, key=lambda p: (p.stat().st_mtime_ns, str(p)))
+
+
+def parse_simstadt_summary(log: str) -> dict:
+    """Extract headline HeatDemand values printed by the current SimStadt CLI."""
+    patterns = {
+        "specific_heating_kwh_m2a": r"Specific Heating demand\s*:\s*([\d.,]+)\s*kWh",
+        "heated_area_m2": r"Heated area\s*:\s*([\d.,]+)\s*m²",
+        "yearly_heating_kwh_a": r"Yearly Heating demand\s*:\s*([\d.,]+)\s*kWh",
+        "yearly_heating_dhw_kwh_a": r"Total Yearly Heating \+ DHW demand\s*:\s*([\d.,]+)\s*kWh",
+        "mean_u_value": r"Mean Uvalue\s*:\s*([\d.,]+)\s*W",
+        "year_of_construction": r"Year of construction\s*:\s*([\d.,]+)",
+    }
+    out = {}
+    for key, pattern in patterns.items():
+        match = re.search(pattern, log or "", flags=re.IGNORECASE)
+        if match:
+            value = match.group(1).replace(".", "").replace(",", ".")
+            try:
+                out[key] = float(value)
+            except ValueError:
+                pass
+    return out
+
+
+def _direct_series_error_metrics(observed: pd.Series, simulated: pd.Series) -> dict:
+    joined = pd.concat([observed.rename("observed"), simulated.rename("simulated")], axis=1).dropna()
+    if joined.empty:
+        return {}
+    error = joined["simulated"] - joined["observed"]
+    mae = float(np.mean(np.abs(error)))
+    rmse = float(np.sqrt(np.mean(error ** 2)))
+    bias = float(np.mean(error))
+    denom = float(np.sum((joined["observed"] - joined["observed"].mean()) ** 2))
+    r2 = float(1.0 - np.sum(error ** 2) / denom) if denom > 0 else np.nan
+    return {
+        "n": int(len(joined)),
+        "mae": mae,
+        "rmse": rmse,
+        "bias": bias,
+        "r2": r2,
+    }
+
+
+def _find_column(df: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
+    normalized = {_normalise_column(c): c for c in df.columns}
+    for candidate in candidates:
+        key = _normalise_column(candidate)
+        if key in normalized:
+            return normalized[key]
+    return None
+
+
+def extract_comparable_simstadt_series(csv_files: list[Path]) -> tuple[pd.DataFrame, list[str]]:
+    """Extract only genuine temperature/CO2 measurement series when present."""
+    frames = []
+    notes = []
+    for path in csv_files:
+        try:
+            df = _read_simstadt_csv(path)
+        except Exception:
+            continue
+
+        timestamp_col = _find_column(df, ("timestamp", "datetime", "date_time", "date"))
+        temp_col = _find_column(df, ("temperature", "ambient temperature", "dry-bulb ambient temperature"))
+        co2_col = _find_column(df, ("co2", "co2 ppm", "carbon dioxide ppm"))
+
+        if timestamp_col is None or (temp_col is None and co2_col is None):
+            continue
+
+        time = pd.to_datetime(df[timestamp_col], errors="coerce", dayfirst=True)
+        item = pd.DataFrame({"timestamp": time}).dropna()
+        if temp_col:
+            item["sim_temperature"] = pd.to_numeric(df.loc[item.index, temp_col], errors="coerce")
+        if co2_col:
+            item["sim_co2_ppm"] = pd.to_numeric(df.loc[item.index, co2_col], errors="coerce")
+        item = item.dropna(subset=["timestamp"]).drop_duplicates("timestamp")
+        if len(item) > 0:
+            item["source_file"] = path.name
+            frames.append(item)
+            notes.append(path.name)
+
+    if not frames:
+        return pd.DataFrame(columns=["timestamp", "sim_temperature", "sim_co2_ppm", "source_file"]), notes
+    return pd.concat(frames, ignore_index=True).sort_values("timestamp"), notes
+
+
+def validate_against_sensors(
+    sim_series: pd.DataFrame,
+    temp_df: pd.DataFrame,
+    co2_df: pd.DataFrame,
+    threshold: float,
+) -> tuple[pd.DataFrame, dict]:
+    """Calculate direct metrics only where SimStadt emits the same physical variable."""
+    metrics = {}
+    comparisons = []
+
+    if not sim_series.empty:
+        observed_temp = temp_df.copy()
+        observed_temp["timestamp"] = pd.to_datetime(observed_temp["timestamp"], errors="coerce")
+        observed_temp["value"] = pd.to_numeric(observed_temp["value"], errors="coerce")
+        observed_temp = observed_temp.dropna(subset=["timestamp", "value"]).set_index("timestamp")
+        if "sim_temperature" in sim_series.columns:
+            s = sim_series.dropna(subset=["sim_temperature"]).set_index("timestamp")["sim_temperature"]
+            o = observed_temp["value"].resample("1h").mean()
+            s = s.resample("1h").mean()
+            m = _direct_series_error_metrics(o, s)
+            if m:
+                metrics["temperature"] = m
+                comparisons.append({"Variable": "Temperature", "Unit": "°C", **m})
+
+        observed_co2 = co2_df.copy()
+        observed_co2["timestamp"] = pd.to_datetime(observed_co2["timestamp"], errors="coerce")
+        observed_co2["value"] = pd.to_numeric(observed_co2["value"], errors="coerce")
+        observed_co2 = observed_co2.dropna(subset=["timestamp", "value"]).set_index("timestamp")
+        if "sim_co2_ppm" in sim_series.columns:
+            s = sim_series.dropna(subset=["sim_co2_ppm"]).set_index("timestamp")["sim_co2_ppm"]
+            o = observed_co2["value"].resample("1h").mean()
+            s = s.resample("1h").mean()
+            m = _direct_series_error_metrics(o, s)
+            if m:
+                metrics["co2_ppm"] = m
+                comparisons.append({"Variable": "CO₂", "Unit": "ppm", **m})
+
+    comparison_df = pd.DataFrame(comparisons)
+    if comparison_df.empty:
+        metrics["direct_comparison"] = "unavailable"
+        metrics["reason"] = (
+            "The SimStadt output contains energy/emission results rather than room Temperature "
+            "or CO₂ concentration (ppm). Direct sensor MAE/RMSE is therefore not physically valid."
+        )
+    else:
+        metrics["direct_comparison"] = "available"
+
+    return comparison_df, metrics
+
+
+def render_validation(
+    output_dir: Path,
+    temp_df: pd.DataFrame,
+    co2_df: pd.DataFrame,
+    stats: dict,
+    co2_threshold: float,
+    log: str,
+):
+    st.subheader("6 · Automatic validation against HFT sensors")
+
+    summary = parse_simstadt_summary(log)
+    if summary:
+        st.markdown("**SimStadt headline results**")
+        cards = [
+            ("Specific heating demand", summary.get("specific_heating_kwh_m2a"), "kWh/(m²·a)"),
+            ("Yearly heating demand", summary.get("yearly_heating_kwh_a"), "kWh/a"),
+            ("Heating + DHW", summary.get("yearly_heating_dhw_kwh_a"), "kWh/a"),
+            ("Heated area", summary.get("heated_area_m2"), "m²"),
+        ]
+        cols = st.columns(4)
+        for col, (label, value, unit) in zip(cols, cards):
+            col.metric(label, "n/a" if value is None else f"{value:,.1f} {unit}")
+
+    st.markdown("**Observed boundary conditions used by the Sandbox**")
+    if stats:
+        a, b, c, d = st.columns(4)
+        a.metric("Observed mean temperature", f"{stats['temperature_mean']:.1f} °C")
+        b.metric("Observed P95 CO₂", f"{stats['co2_p95']:.0f} ppm")
+        c.metric("Occupied proxy", f"{100 * stats['occupied_fraction']:.1f}%")
+        d.metric("ACH decay proxy", "n/a" if np.isnan(stats["ach_median_proxy"]) else f"{stats['ach_median_proxy']:.2f} h⁻¹")
+
+    csv_files = collect_simstadt_csvs(output_dir)
+    sim_series, sources = extract_comparable_simstadt_series(csv_files)
+    comparison_df, metrics = validate_against_sensors(sim_series, temp_df, co2_df, co2_threshold)
+
+    if metrics.get("direct_comparison") == "available":
+        st.markdown("**Direct same-variable validation**")
+        st.dataframe(comparison_df, width="stretch", hide_index=True)
+        for variable, key in (("Temperature", "temperature"), ("CO₂", "co2_ppm")):
+            if key not in metrics:
+                continue
+            m = metrics[key]
+            fig = go.Figure()
+            observed = temp_df if key == "temperature" else co2_df
+            obs = observed.copy()
+            obs["timestamp"] = pd.to_datetime(obs["timestamp"], errors="coerce")
+            obs = obs.dropna(subset=["timestamp"]).set_index("timestamp")["value"].resample("1h").mean()
+            sim = sim_series.dropna(subset=["sim_temperature" if key == "temperature" else "sim_co2_ppm"]).set_index("timestamp")
+            sim_col = "sim_temperature" if key == "temperature" else "sim_co2_ppm"
+            sim = sim[sim_col].resample("1h").mean()
+            fig.add_trace(go.Scatter(x=obs.index, y=obs.values, name="HFT observed", mode="lines"))
+            fig.add_trace(go.Scatter(x=sim.index, y=sim.values, name="SimStadt", mode="lines"))
+            fig.update_layout(title=f"{variable}: observed vs SimStadt", xaxis_title="Time", yaxis_title=f"{variable} ({'°C' if key == 'temperature' else 'ppm'})")
+            st.plotly_chart(fig, width="stretch")
+            st.caption(f"MAE {m['mae']:.3f} · RMSE {m['rmse']:.3f} · bias {m['bias']:.3f} · R² {m['r2']:.3f} · n={m['n']:,}")
+    else:
+        st.info(
+            "No direct Temperature/CO₂-concentration series was emitted by this SimStadt workflow. "
+            "The dashboard therefore shows the simulated energy/emission outputs and the measured "
+            "sensor boundary conditions separately instead of computing an invalid ppm-vs-kWh error."
+        )
+        boundary = pd.DataFrame([
+            {"Observed variable": "Temperature", "Unit": "°C", "Mean": stats.get("temperature_mean"), "P10": stats.get("temperature_p10"), "P90": stats.get("temperature_p90")},
+            {"Observed variable": "CO₂", "Unit": "ppm", "Mean": stats.get("co2_mean"), "P95": stats.get("co2_p95"), "Occupied proxy": stats.get("occupied_fraction")},
+        ]) if stats else pd.DataFrame()
+        if not boundary.empty:
+            st.dataframe(boundary, width="stretch", hide_index=True)
+
+    if csv_files:
+        st.caption("SimStadt exported CSV files available for inspection:")
+        st.dataframe(
+            pd.DataFrame([{"File": p.name, "Path": str(p), "Size": f"{p.stat().st_size / 1024:.1f} KB"} for p in csv_files]),
+            width="stretch",
+            hide_index=True,
+        )
+
+    if sim_series.empty:
+        st.caption(
+            "No same-variable time series was found in the exported SimStadt CSVs. "
+            "Heat Demand produces annual/monthly demand outputs; Hourly Heat Demand produces hourly heating demand."
+        )
 
 # ---------------------------------------------------------------------------
 # IFC/CityGML bridge helpers
@@ -669,7 +916,7 @@ def render_simstadt_sandbox(
                 for p in result_files:
                     if p.suffix.lower() == ".csv":
                         try:
-                            df = pd.read_csv(p)
+                            df = _read_simstadt_csv(p)
                             st.markdown(f"**{p.name}**")
                             st.dataframe(df.head(1000), width="stretch", hide_index=True)
                             st.download_button(
@@ -680,6 +927,15 @@ def render_simstadt_sandbox(
                             )
                         except Exception:
                             pass
+
+            render_validation(
+                output_dir,
+                temp,
+                co2,
+                stats,
+                float(threshold),
+                log,
+            )
         else:
             st.error("SimStadt did not complete successfully.")
             st.code(log[-12000:] if log else "No diagnostic log returned.")
