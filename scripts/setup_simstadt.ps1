@@ -29,6 +29,16 @@ $java = Get-Command java -ErrorAction SilentlyContinue
 if (-not $java) {
     Write-Warning "Java was not found on PATH. Current SimStadt documentation requires Java 17+ for local execution."
     Write-Warning "Install a Java 17+ distribution (Liberica Full JRE/JDK is documented as a compatible option) and restart VS Code."
+} else {
+    Write-Host "Java detected: $($java.Source)"
+}
+
+$insel = Get-Command insel -ErrorAction SilentlyContinue
+if (-not $insel) {
+    Write-Warning "INSEL was not found on PATH. Current SimStadt documentation lists INSEL as required by the workflow environment."
+    Write-Warning "Install INSEL and restart VS Code before running energy workflows."
+} else {
+    Write-Host "INSEL detected: $($insel.Source)"
 }
 
 Write-Host ""
