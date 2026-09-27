@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from temperature_dashboard.db import exists, hierarchy, query
-from temperature_dashboard.ifc_models import model_buildings, viewer_spaces
+from temperature_dashboard.ifc_models import DATA_DIR, list_models, viewer_spaces
 
 
 # ---------------------------------------------------------------------------
@@ -265,19 +265,31 @@ def discover_ifc_converter() -> tuple[str | None, str]:
 
 
 def convert_ifc_to_citygml(ifc_path: Path, output_path: Path, georef: bool = False) -> tuple[bool, str]:
-    """Run TUM-GIS IFC→CityGML 3.0 converter; preserve IFC properties/references."""
+    """Run the TUM-GIS IFC→CityGML 3.0 converter and return its log."""
+    ifc_path = ifc_path.expanduser().resolve()
+    output_path = output_path.expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not ifc_path.exists():
+        return False, f"IFC file does not exist: {ifc_path}"
+
     command, source = discover_ifc_converter()
     if not command:
         return False, "No IFC→CityGML converter or Docker runtime was detected."
 
     if source == "docker":
-        # TUM-GIS publishes a ready-to-run multi-arch image.
+        # The generated GML must live in a host-mounted directory. Copy only
+        # the selected IFC into the run workspace; the source IFC is untouched.
+        workspace = output_path.parent
+        docker_ifc = workspace / ifc_path.name
+        if docker_ifc.resolve() != ifc_path.resolve():
+            shutil.copy2(ifc_path, docker_ifc)
+
         cmd = [
             command, "run", "--rm",
-            "-v", f"{ifc_path.parent.resolve()}:/app",
+            "-v", f"{workspace.resolve()}:/app",
             "ghcr.io/tum-gis/ifc-to-citygml3:latest",
-            f"/app/{ifc_path.name}",
+            f"/app/{docker_ifc.name}",
             "-o", f"/app/{output_path.name}",
         ]
         if georef:
@@ -287,9 +299,27 @@ def convert_ifc_to_citygml(ifc_path: Path, output_path: Path, georef: bool = Fal
         if georef:
             cmd.append("--georef-oktoberfest")
 
-    return _run_command(cmd, timeout_s=1800)
+    ok, log = _run_command(cmd, timeout_s=1800)
+    return ok, log
 
 
+def get_active_ifc_for_building(building: str) -> tuple[Path | None, str]:
+    """Prefer an active Architecture IFC, then any active IFC for the building."""
+    models = list_models(building=building, active_only=True)
+    if models.empty:
+        return None, "No active IFC model is registered for this building."
+
+    preferred = models[models["role"].astype(str).str.lower() == "architecture"]
+    row = (preferred.iloc[0] if not preferred.empty else models.iloc[0])
+    stored = str(row.get("stored_filename") or "").strip()
+    if not stored:
+        return None, f"Registered IFC model #{int(row['id'])} has no stored path."
+
+    path = DATA_DIR / stored
+    if not path.exists():
+        return None, f"Registered IFC model #{int(row['id'])} is missing from disk: {path}"
+
+    return path, f"#{int(row['id'])} · {row['role']} · {row['filename']}"
 # ---------------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------------
@@ -568,56 +598,91 @@ def render_simstadt_sandbox(
         )
 
     if run:
+        run_root = Path(tempfile.gettempdir()) / "hft_simstadt_runs" / str(building) / str(floor)
+        run_root.mkdir(parents=True, exist_ok=True)
+        output_dir = run_root / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Prefer an explicitly supplied CityGML file. Otherwise automatically
+        # convert the active IFC model registered for this building.
         source = Path(custom_path).expanduser() if custom_path.strip() else None
-        if source is None or not source.exists():
-            st.error(
-                "Provide an existing CityGML file. The current IFC-space extractor is not a "
-                "full IFC→CityGML/Energy ADE conversion."
+        source_label = "Existing CityGML"
+
+        if source is None:
+            ifc_source, ifc_label = get_active_ifc_for_building(building)
+            if ifc_source is None:
+                st.error(ifc_label)
+                return
+
+            generated_gml = run_root / f"{ifc_source.stem}.gml"
+            needs_conversion = (
+                not generated_gml.exists()
+                or generated_gml.stat().st_mtime_ns < ifc_source.stat().st_mtime_ns
             )
-        else:
-            run_root = Path(tempfile.gettempdir()) / "hft_simstadt_runs" / building / floor
-            run_root.mkdir(parents=True, exist_ok=True)
-            output_dir = run_root / "output"
-            output_dir.mkdir(parents=True, exist_ok=True)
 
-            with st.spinner(f"Running SimStadt {workflow}…"):
-                ok, log = run_real_simstadt(source, workflow, output_dir)
-
-            if ok:
-                st.success("SimStadt workflow completed.")
-                st.code(log[-12000:] if log else "Completed without textual output.")
-
-                result_files = sorted(output_dir.rglob("*"))
-                result_files = [p for p in result_files if p.is_file()]
-                if result_files:
-                    rows = []
-                    for p in result_files:
-                        rows.append(
-                            {
-                                "File": p.name,
-                                "Type": p.suffix.lower() or "file",
-                                "Size": f"{p.stat().st_size / 1024:.1f} KB",
-                            }
-                        )
-                    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
-
-                    for p in result_files:
-                        if p.suffix.lower() == ".csv":
-                            try:
-                                df = pd.read_csv(p)
-                                st.markdown(f"**{p.name}**")
-                                st.dataframe(df.head(1000), width="stretch", hide_index=True)
-                                st.download_button(
-                                    f"Download {p.name}",
-                                    p.read_bytes(),
-                                    file_name=p.name,
-                                    key=f"download_{p.name}_{p.stat().st_mtime_ns}",
-                                )
-                            except Exception:
-                                pass
+            if needs_conversion:
+                with st.spinner(f"Converting {ifc_label} → CityGML 3.0…"):
+                    converted, conversion_log = convert_ifc_to_citygml(
+                        ifc_source,
+                        generated_gml,
+                        georef=False,
+                    )
+                if not converted or not generated_gml.exists():
+                    st.error("Automatic IFC → CityGML 3.0 conversion failed.")
+                    st.code(conversion_log[-12000:] if conversion_log else "No converter log returned.")
+                    return
             else:
-                st.error("SimStadt did not complete successfully.")
-                st.code(log[-12000:] if log else "No diagnostic log returned.")
+                conversion_log = "Reusing up-to-date generated CityGML."
+
+            source = generated_gml
+            source_label = f"Auto-converted from IFC · {ifc_label}"
+            st.success(f"CityGML ready: {source.name}")
+            with st.expander("IFC → CityGML conversion log"):
+                st.code(conversion_log[-12000:] if conversion_log else "Conversion completed.")
+
+        if not source.exists():
+            st.error(f"CityGML source does not exist: {source}")
+            return
+
+        st.caption(f"SimStadt input: {source_label} · {source}")
+
+        with st.spinner(f"Running SimStadt {workflow}…"):
+            ok, log = run_real_simstadt(source, workflow, output_dir)
+
+        if ok:
+            st.success("SimStadt workflow completed.")
+            st.code(log[-12000:] if log else "Completed without textual output.")
+
+            result_files = sorted(output_dir.rglob("*"))
+            result_files = [p for p in result_files if p.is_file()]
+            if result_files:
+                rows = [
+                    {
+                        "File": p.name,
+                        "Type": p.suffix.lower() or "file",
+                        "Size": f"{p.stat().st_size / 1024:.1f} KB",
+                    }
+                    for p in result_files
+                ]
+                st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+                for p in result_files:
+                    if p.suffix.lower() == ".csv":
+                        try:
+                            df = pd.read_csv(p)
+                            st.markdown(f"**{p.name}**")
+                            st.dataframe(df.head(1000), width="stretch", hide_index=True)
+                            st.download_button(
+                                f"Download {p.name}",
+                                p.read_bytes(),
+                                file_name=p.name,
+                                key=f"download_{p.name}_{p.stat().st_mtime_ns}",
+                            )
+                        except Exception:
+                            pass
+        else:
+            st.error("SimStadt did not complete successfully.")
+            st.code(log[-12000:] if log else "No diagnostic log returned.")
 
     st.divider()
     st.subheader("5 · Research hand-off")
