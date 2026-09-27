@@ -109,6 +109,22 @@ Docker remains available as a fallback when the local converter is not installed
 
 The dashboard caches each IFC → CityGML conversion using the source file timestamp/size and converter version. Re-running an unchanged model therefore does not repeat the expensive geometry conversion.
 
+### SimStadt local runtime
+
+The current SimStadt CLI can be installed from PyPI and can download/install the current SimStadt runtime locally.
+
+Run once:
+
+~~~text
+powershell -ExecutionPolicy Bypass -File .\\scripts\\setup_simstadt.ps1
+~~~
+
+The dashboard automatically looks for the local `simstadt` command or Python module before falling back to Docker.
+
+The current Docker fallback image is `simstadt/simstadt:cli`.
+
+For local SimStadt execution, the current SimStadt documentation requires Java 17+ and also lists INSEL as a required component for the full application/workflow environment.
+
 ### Installation
 
 Clone the repository:
