@@ -231,7 +231,7 @@ def list_models(building: str | None = None, active_only: bool = False) -> pd.Da
     if active_only:
         clauses.append("m.active=1")
     where = " WHERE " + " AND ".join(clauses) if clauses else ""
-    sql = f"""SELECT m.id, m.building, m.filename, m.role, m.revision, m.schema_name, m.project_name,
+    sql = f"""SELECT m.id, m.building, m.filename, m.stored_filename, m.role, m.revision, m.schema_name, m.project_name,
               m.ifc_building_names, m.size_bytes, m.uploaded_at, m.active, m.error,
               COUNT(s.global_id) AS spaces, COALESCE(SUM(CASE WHEN s.vertex_count>0 THEN 1 ELSE 0 END), 0) AS geometry_spaces
               FROM models m LEFT JOIN spaces s ON s.model_id=m.id {where} GROUP BY m.id ORDER BY m.uploaded_at DESC"""
