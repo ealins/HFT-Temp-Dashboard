@@ -1,0 +1,7 @@
+
+# SimStadt Sandbox Ignore
+simstadt_sandbox/outputs/
+simstadt_sandbox/*.db
+simstadt_sandbox/*.db-*
+simstadt_sandbox/*.cache
+simstadt_sandbox/*.jar
