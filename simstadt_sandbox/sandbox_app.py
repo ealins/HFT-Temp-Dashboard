@@ -226,7 +226,7 @@ def start_simstadt_background(citygml_path: Path, workflow: str, output_dir: Pat
             command, "run", "--rm",
             "-v", f"{citygml_path.parent.resolve()}:/data",
             "-e", "LOCALE=en_GB",
-            "simstadt/simstadt",
+            "simstadt/simstadt:cli",
             "simstadt", workflow, f"/data/{citygml_path.name}",
             "-p", "/data/output",
             "--files", "--csv-export",
