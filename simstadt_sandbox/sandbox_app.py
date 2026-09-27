@@ -499,9 +499,7 @@ def render_simstadt_sandbox(
         workflow_labels = {
             "HeatDemand": "Heat Demand",
             "HourlyHeatDemand": "Hourly Heat Demand",
-            "EnvironmentalAnalysis": "Environmental Analysis (CO₂)",
-            "EnvironmentalAnalysisWithRefurbishmentStrategy": "Environmental + Refurbishment",
-            "PhotovoltaicPotential": "PV Potential",
+            "EnvironmentalAnalysis": "Environmental / CO₂ Analysis",
         }
         workflow = st.selectbox(
             "SimStadt workflow",
