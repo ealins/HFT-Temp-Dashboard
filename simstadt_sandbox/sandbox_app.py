@@ -1068,23 +1068,32 @@ def render_simstadt_sandbox(
     st.divider()
     st.subheader("4 · Run real SimStadt workflow")
 
-    run_col, info_col = st.columns([1, 2])
+    run_root = Path(tempfile.gettempdir()) / "hft_simstadt_runs" / str(building) / str(floor)
+    output_dir = run_root / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    job_status = get_simstadt_background_status(output_dir)
+
+    run_col, stop_col, info_col = st.columns([1.25, 0.8, 2])
     with run_col:
-        run = st.button("▶ Run SimStadt", type="primary", width="stretch")
+        run = st.button(
+            "▶ Start SimStadt in background",
+            type="primary",
+            width="stretch",
+            disabled=job_status.get("state") == "running",
+        )
+    with stop_col:
+        stop = st.button(
+            "■ Stop",
+            width="stretch",
+            disabled=job_status.get("state") != "running",
+        )
     with info_col:
         st.caption(
-            "No mock results are generated. A run is successful only when a real SimStadt "
-            "workflow returns successfully."
+            "Simulation runs outside the Streamlit request. The page remains responsive "
+            "and polls the worker for completion."
         )
 
     if run:
-        run_root = Path(tempfile.gettempdir()) / "hft_simstadt_runs" / str(building) / str(floor)
-        run_root.mkdir(parents=True, exist_ok=True)
-        output_dir = run_root / "output"
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Prefer an explicitly supplied CityGML file. Otherwise automatically
-        # convert the active IFC model registered for this building.
         source = Path(custom_path).expanduser() if custom_path.strip() else None
         source_label = "Existing CityGML"
 
@@ -1109,69 +1118,43 @@ def render_simstadt_sandbox(
                     )
                 if not converted or not generated_gml.exists():
                     st.error("Automatic IFC → CityGML 3.0 conversion failed.")
-                    st.code(conversion_log[-12000:] if conversion_log else "No converter log returned.")
+                    st.code(
+                        conversion_log[-12000:]
+                        if conversion_log
+                        else "No converter log returned."
+                    )
                     return
-            else:
-                conversion_log = "Reusing up-to-date generated CityGML."
-
             source = generated_gml
             source_label = f"Auto-converted from IFC · {ifc_label}"
-            st.success(f"CityGML ready: {source.name}")
-            with st.expander("IFC → CityGML conversion log"):
-                st.code(conversion_log[-12000:] if conversion_log else "Conversion completed.")
 
         if not source.exists():
             st.error(f"CityGML source does not exist: {source}")
             return
 
-        st.caption(f"SimStadt input: {source_label} · {source}")
-
-        with st.spinner(f"Running SimStadt {workflow}…"):
-            ok, log = run_real_simstadt(source, workflow, output_dir)
-
-        if ok:
-            st.success("SimStadt workflow completed.")
-            st.code(log[-12000:] if log else "Completed without textual output.")
-
-            result_files = sorted(output_dir.rglob("*"))
-            result_files = [p for p in result_files if p.is_file()]
-            if result_files:
-                rows = [
-                    {
-                        "File": p.name,
-                        "Type": p.suffix.lower() or "file",
-                        "Size": f"{p.stat().st_size / 1024:.1f} KB",
-                    }
-                    for p in result_files
-                ]
-                st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
-
-                for p in result_files:
-                    if p.suffix.lower() == ".csv":
-                        try:
-                            df = _read_simstadt_csv(p)
-                            st.markdown(f"**{p.name}**")
-                            st.dataframe(df.head(1000), width="stretch", hide_index=True)
-                            st.download_button(
-                                f"Download {p.name}",
-                                p.read_bytes(),
-                                file_name=p.name,
-                                key=f"download_{p.name}_{p.stat().st_mtime_ns}",
-                            )
-                        except Exception:
-                            pass
-
-            render_validation(
-                output_dir,
-                temp,
-                co2,
-                stats,
-                float(threshold),
-                log,
-            )
+        started, message = start_simstadt_background(source, workflow, output_dir)
+        if started:
+            st.success(message)
+            st.caption(f"SimStadt input: {source_label} · {source}")
+            st.rerun()
         else:
-            st.error("SimStadt did not complete successfully.")
-            st.code(log[-12000:] if log else "No diagnostic log returned.")
+            st.error(message)
+
+    if stop:
+        stopped, message = stop_simstadt_background(output_dir)
+        (st.success if stopped else st.error)(message)
+        st.rerun()
+
+    @st.fragment(run_every="3s")
+    def _simstadt_poll():
+        _render_simstadt_completed_results(
+            output_dir,
+            temp,
+            co2,
+            stats,
+            float(threshold),
+        )
+
+    _simstadt_poll()
 
     st.divider()
     st.subheader("6 · Research hand-off")
