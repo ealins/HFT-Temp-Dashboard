@@ -295,6 +295,16 @@ The dashboard is intended to operate on building and sensor datasets supplied by
 
 When using real building or occupancy-related data, ensure that the dataset and deployment comply with the applicable institutional, contractual, and data-protection requirements.
 
+## Third-Party Attribution
+
+This dashboard uses the open-source **TUM-GIS IFC → CityGML 3.0** project to convert registered IFC building models into CityGML 3.0 for the SimStadt workflow.
+
+**Source repository:** https://github.com/tum-gis/ifc-to-citygml3
+
+The IFC-to-CityGML conversion capability in this dashboard was adapted from that TUM-GIS repository. The upstream project is developed by the **TUM-GIS** team and provides the IFC-to-CityGML 3.0 conversion functionality used here. Please refer to the upstream repository for its authorship, license, documentation, and original implementation.
+
+This dashboard does not claim ownership of the upstream IFC-to-CityGML converter. Any use, redistribution, or modification of that component remains subject to the upstream project's applicable license and attribution requirements.
+
 ## Technical Resources
 
 - **TUM-GIS IFC → CityGML 3.0:** https://github.com/tum-gis/ifc-to-citygml3
