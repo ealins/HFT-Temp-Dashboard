@@ -737,14 +737,30 @@ def discover_citygml_inputs(building: str, floor: str) -> list[Path]:
     return sorted(filtered or candidates)
 
 def discover_ifc_converter() -> tuple[str | None, str]:
-    """Find the TUM IFC→CityGML 3.0 converter via Docker or a local checkout."""
+    """Find the TUM IFC→CityGML 3.0 converter via env, local checkout, or Docker."""
     env = os.getenv("IFC2CITYGML_COMMAND", "").strip()
     if env:
         return env, "IFC2CITYGML_COMMAND"
-    for name in ("ifc2citygml",):
-        found = shutil.which(name)
-        if found:
-            return found, "local executable"
+
+    executable = shutil.which("ifc2citygml")
+    if executable:
+        return executable, "local executable"
+
+    script_env = os.getenv("IFC2CITYGML_SCRIPT", "").strip()
+    if script_env and Path(script_env).expanduser().exists():
+        return str(Path(script_env).expanduser()), "IFC2CITYGML_SCRIPT"
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script_candidates = [
+        repo_root / "ifc2citygml.py",
+        repo_root / "ifc-to-citygml3" / "ifc2citygml.py",
+        repo_root.parent / "ifc-to-citygml3" / "ifc2citygml.py",
+        Path.cwd() / "ifc2citygml.py",
+    ]
+    for script in script_candidates:
+        if script.exists():
+            return str(script), "local converter script"
+
     docker = shutil.which("docker")
     if docker:
         return docker, "docker"
@@ -781,6 +797,11 @@ def convert_ifc_to_citygml(ifc_path: Path, output_path: Path, georef: bool = Fal
         ]
         if georef:
             cmd.append("--georef-oktoberfest")
+    elif source in {"IFC2CITYGML_SCRIPT", "local converter script"}:
+        cmd = [shutil.which("python") or os.getenv("PYTHON", "python"), command,
+               str(ifc_path), "-o", str(output_path)]
+        if georef:
+            cmd.append("--georef-oktoberfest")
     else:
         cmd = [command, str(ifc_path), "-o", str(output_path)]
         if georef:
@@ -788,6 +809,23 @@ def convert_ifc_to_citygml(ifc_path: Path, output_path: Path, georef: bool = Fal
 
     ok, log = _run_command(cmd, timeout_s=1800)
     return ok, log
+
+
+def _registered_ifc_path(row: pd.Series) -> Path | None:
+    """Resolve the current registry path, including legacy records created before stored_filename was exposed."""
+    stored = str(row.get("stored_filename") or "").strip()
+    if stored:
+        candidate = DATA_DIR / stored
+        if candidate.exists():
+            return candidate
+
+    model_id = row.get("id")
+    if model_id is not None:
+        legacy = DATA_DIR / "ifc_models" / str(int(model_id)) / "model.ifc"
+        if legacy.exists():
+            return legacy
+
+    return None
 
 
 def get_active_ifc_for_building(building: str) -> tuple[Path | None, str]:
@@ -798,13 +836,12 @@ def get_active_ifc_for_building(building: str) -> tuple[Path | None, str]:
 
     preferred = models[models["role"].astype(str).str.lower() == "architecture"]
     row = (preferred.iloc[0] if not preferred.empty else models.iloc[0])
-    stored = str(row.get("stored_filename") or "").strip()
-    if not stored:
-        return None, f"Registered IFC model #{int(row['id'])} has no stored path."
-
-    path = DATA_DIR / stored
-    if not path.exists():
-        return None, f"Registered IFC model #{int(row['id'])} is missing from disk: {path}"
+    path = _registered_ifc_path(row)
+    if path is None:
+        return None, (
+            f"Registered IFC model #{int(row['id'])} ({row['filename']}) "
+            "cannot be found in the dashboard data directory. Re-upload the IFC in Admin → IFC models."
+        )
 
     return path, f"#{int(row['id'])} · {row['role']} · {row['filename']}"
 # ---------------------------------------------------------------------------
@@ -952,17 +989,23 @@ def render_simstadt_sandbox(
 
         st.markdown("**IFC → CityGML 3.0 conversion**")
         registered_files = []
+        registered_paths: dict[str, Path] = {}
         if not registered.empty:
-            registered_files = [
-                str(Path("data") / str(row["stored_filename"]))
-                for _, row in registered.iterrows()
-                if row.get("stored_filename")
-            ]
+            for _, row in registered.iterrows():
+                resolved = _registered_ifc_path(row)
+                if resolved is not None:
+                    label = f"#{int(row['id'])} · {row['role']} · {row['filename']}"
+                    registered_files.append(label)
+                    registered_paths[label] = resolved
         converter, converter_source = discover_ifc_converter()
         if converter:
             st.success(f"IFC→CityGML converter detected: {converter_source}")
         else:
-            st.warning("No IFC→CityGML conversion backend detected. Docker is the easiest route.")
+            st.warning(
+                "No IFC→CityGML conversion backend is available on this machine. "
+                "Install Docker Desktop, install the TUM-GIS converter locally, or set "
+                "IFC2CITYGML_COMMAND / IFC2CITYGML_SCRIPT."
+            )
 
         if registered_files:
             selected_ifc = st.selectbox(
@@ -980,9 +1023,10 @@ def render_simstadt_sandbox(
                 if selected_ifc == "None":
                     st.warning("Select an IFC model first.")
                 else:
-                    ifc_source = Path(selected_ifc)
-                    if not ifc_source.is_absolute():
-                        ifc_source = Path.cwd() / ifc_source
+                    ifc_source = registered_paths.get(selected_ifc)
+                    if ifc_source is None:
+                        st.error("The selected IFC could not be resolved on disk. Re-upload it in Admin → IFC models.")
+                        st.stop()
                     output_gml = Path(tempfile.gettempdir()) / "hft_simstadt_runs" / building / floor / f"{ifc_source.stem}.gml"
                     with st.spinner("Converting IFC to CityGML 3.0 with TUM-GIS…"):
                         ok, log = convert_ifc_to_citygml(ifc_source, output_gml, georef_ifc)
