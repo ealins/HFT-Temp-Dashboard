@@ -1117,14 +1117,17 @@ def _stage_from_simstadt_log(log: str, workflow: str) -> tuple[int, str]:
         "Primary Energy & CO₂": ("PrimaryEnergy", "Primary Energy"),
     }
     lower_log = (log or "").lower()
-    best = (0, "Initializing / preparing workflow")
+    best_stage = 0
+    best_name = "Initializing / preparing workflow"
+    best_pos = -1
     for idx, stage in enumerate(stages, start=1):
         for alias in aliases.get(stage, (stage,)):
             pos = lower_log.rfind(alias.lower())
-            if pos >= 0 and pos >= best[0]:
-                best = (idx, stage)
-                break
-    return best
+            if pos > best_pos:
+                best_pos = pos
+                best_stage = idx
+                best_name = stage
+    return best_stage, best_name
 
 
 # ---------------------------------------------------------------------------
