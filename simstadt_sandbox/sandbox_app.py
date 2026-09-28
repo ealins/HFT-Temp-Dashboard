@@ -345,26 +345,34 @@ def get_simstadt_background_status(output_dir: Path) -> dict:
     except Exception:
         return {"state": "starting"}
 
-    if job.get("state") == "running":
-        pid = job.get("pid")
-        if _pid_alive(pid):
-            return job
-
-        output_dir = Path(job.get("output", ""))
-        successful_outputs = (
-            (output_dir / "simstadt_summary.csv").exists()
-            or any(output_dir.rglob("*.csv"))
-        )
-        job["state"] = "finished" if successful_outputs else "failed"
-        job["returncode"] = 0 if successful_outputs else -1
-        job_file.write_text(json.dumps(job, indent=2), encoding="utf-8")
-
     try:
         job["log_tail"] = Path(job.get("log", "")).read_text(
             encoding="utf-8", errors="replace"
         )[-12000:]
     except Exception:
         job["log_tail"] = ""
+
+    if job.get("state") == "running":
+        failure_reason = _simstadt_failure_reason(job.get("log_tail", ""))
+        pid = job.get("pid")
+        if failure_reason:
+            job["state"] = "failed"
+            job["returncode"] = -1
+            job["failure_reason"] = failure_reason
+            job_file.write_text(json.dumps(job, indent=2), encoding="utf-8")
+        elif _pid_alive(pid):
+            return job
+        else:
+            output_dir = Path(job.get("output", ""))
+            successful_outputs = (
+                (output_dir / "simstadt_summary.csv").exists()
+                or any(output_dir.rglob("*.csv"))
+            )
+            job["state"] = "finished" if successful_outputs else "failed"
+            job["returncode"] = 0 if successful_outputs else -1
+            if not successful_outputs:
+                job["failure_reason"] = _simstadt_failure_reason(job.get("log_tail", "")) or "SimStadt process exited without result CSVs."
+            job_file.write_text(json.dumps(job, indent=2), encoding="utf-8")
 
     return job
 
@@ -463,10 +471,20 @@ def _simstadt_workflow_progress(output_dir: Path, workflow: str) -> dict:
 
     current_number = numbered[-1][0] if numbered else 0
     current_name = ""
-    if current_number and 1 <= current_number <= total:
+    try:
+        status_for_progress = get_simstadt_background_status(output_dir)
+        log_number, log_name = _stage_from_simstadt_log(
+            status_for_progress.get("log_tail", ""),
+            workflow,
+        )
+        if log_number:
+            current_number, current_name = log_number, log_name
+    except Exception:
+        pass
+    if current_number and 1 <= current_number <= total and not current_name:
         current_name = stages[current_number - 1]
 
-    # A step directory indicates that SimStadt has entered that stage.
+    # A step directory/log marker indicates that SimStadt has entered that stage.
     # Treat the current stage as in-progress rather than already complete.
     completed = max(0, min(total, current_number - 1))
     if current_number >= total and numbered:
@@ -623,7 +641,12 @@ def _render_simstadt_completed_results(
         return
 
     if state in {"failed", "cancelled"}:
-        st.error(f"SimStadt job state: {state}.")
+        reason = status.get("failure_reason")
+        st.error(
+            f"SimStadt {state}: {reason}."
+            if reason
+            else f"SimStadt job state: {state}."
+        )
         with st.expander("SimStadt diagnostics", expanded=True):
             st.code(status.get("log_tail", "") or "No worker output returned.")
         return
@@ -904,6 +927,205 @@ def render_validation(
             "No same-variable time series was found in the exported SimStadt CSVs. "
             "Heat Demand produces annual/monthly demand outputs; Hourly Heat Demand produces hourly heating demand."
         )
+
+# ---------------------------------------------------------------------------
+# Fixed HFT Stuttgart simulation location
+# ---------------------------------------------------------------------------
+
+HFT_SIMULATION_LOCATION = {
+    "name": "HFT Stuttgart",
+    "latitude": 48.780264,
+    "longitude": 9.173191,
+    "epsg": "EPSG:25832",
+    "easting": 512723.256,
+    "northing": 5403043.705,
+}
+
+
+def _citygml_has_root_location(root, gml_ns: str) -> bool:
+    bounded = root.find(f"{{{gml_ns}}}boundedBy")
+    if bounded is None:
+        return False
+    envelope = bounded.find(f"{{{gml_ns}}}Envelope")
+    return envelope is not None and bool(envelope.get("srsName"))
+
+
+def _citygml_coordinate_values(root, gml_ns: str) -> list[tuple[float, float, float]]:
+    """Collect GML coordinate tuples for a conservative model bbox."""
+    values: list[tuple[float, float, float]] = []
+    coordinate_tags = {
+        f"{{{gml_ns}}}posList",
+        f"{{{gml_ns}}}pos",
+        f"{{{gml_ns}}}lowerCorner",
+        f"{{{gml_ns}}}upperCorner",
+    }
+    for element in root.iter():
+        if element.tag not in coordinate_tags or not (element.text or "").strip():
+            continue
+        numbers = [
+            float(x)
+            for x in re.findall(
+                r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][-+]?\d+)?",
+                element.text or "",
+            )
+        ]
+        dimension = 3 if len(numbers) >= 3 and len(numbers) % 3 == 0 else 2
+        for idx in range(0, len(numbers) - dimension + 1, dimension):
+            x, y = numbers[idx], numbers[idx + 1]
+            z = numbers[idx + 2] if dimension == 3 else 0.0
+            values.append((x, y, z))
+    return values
+
+
+def _shift_gml_coordinate_text(text: str, dx: float, dy: float) -> str:
+    numbers = [
+        float(x)
+        for x in re.findall(
+            r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][-+]?\d+)?",
+            text or "",
+        )
+    ]
+    if not numbers:
+        return text
+    dimension = 3 if len(numbers) >= 3 and len(numbers) % 3 == 0 else 2
+    out = []
+    for idx, value in enumerate(numbers):
+        if idx % dimension == 0:
+            value += dx
+        elif idx % dimension == 1:
+            value += dy
+        out.append(f"{value:.6f}")
+    return " ".join(out)
+
+
+def prepare_hft_simulation_citygml(source_path: Path, prepared_path: Path) -> tuple[Path | None, str]:
+    """Prepare CityGML for SimStadt using the fixed HFT Stuttgart location."""
+    import xml.etree.ElementTree as ET
+
+    source_path = source_path.expanduser().resolve()
+    prepared_path = prepared_path.expanduser().resolve()
+    if not source_path.exists():
+        return None, f"CityGML source does not exist: {source_path}"
+
+    try:
+        tree = ET.parse(source_path)
+        root = tree.getroot()
+    except Exception as exc:
+        return None, f"Could not parse CityGML: {exc}"
+
+    gml_ns = "http://www.opengis.net/gml/3.2"
+    if _citygml_has_root_location(root, gml_ns):
+        return source_path, "CityGML already contains a valid CRS/envelope; existing georeferencing was preserved."
+
+    coordinates = _citygml_coordinate_values(root, gml_ns)
+    if not coordinates:
+        return None, "CityGML has no usable GML coordinates; cannot establish the fixed HFT Stuttgart location."
+
+    xs = [item[0] for item in coordinates]
+    ys = [item[1] for item in coordinates]
+    already_projected = (
+        min(xs) > 200000 and max(xs) < 900000
+        and min(ys) > 4000000 and max(ys) < 6500000
+    )
+
+    dx = 0.0
+    dy = 0.0
+    if not already_projected:
+        dx = HFT_SIMULATION_LOCATION["easting"] - (min(xs) + max(xs)) / 2.0
+        dy = HFT_SIMULATION_LOCATION["northing"] - (min(ys) + max(ys)) / 2.0
+        coordinate_tags = {
+            f"{{{gml_ns}}}posList",
+            f"{{{gml_ns}}}pos",
+            f"{{{gml_ns}}}lowerCorner",
+            f"{{{gml_ns}}}upperCorner",
+        }
+        for element in root.iter():
+            if element.tag in coordinate_tags and (element.text or "").strip():
+                element.text = _shift_gml_coordinate_text(element.text or "", dx, dy)
+
+    shifted = [(x + dx, y + dy, z) for x, y, z in coordinates]
+    lower_x = min(x for x, _, _ in shifted)
+    lower_y = min(y for _, y, _ in shifted)
+    lower_z = min(z for _, _, z in shifted)
+    upper_x = max(x for x, _, _ in shifted)
+    upper_y = max(y for _, y, _ in shifted)
+    upper_z = max(z for _, _, z in shifted)
+
+    bounded = root.find(f"{{{gml_ns}}}boundedBy")
+    if bounded is None:
+        bounded = ET.Element(f"{{{gml_ns}}}boundedBy")
+        insert_at = next(
+            (idx for idx, child in enumerate(list(root)) if child.tag.endswith("cityObjectMember")),
+            0,
+        )
+        root.insert(insert_at, bounded)
+
+    envelope = bounded.find(f"{{{gml_ns}}}Envelope")
+    if envelope is None:
+        envelope = ET.SubElement(bounded, f"{{{gml_ns}}}Envelope")
+    envelope.set("srsName", HFT_SIMULATION_LOCATION["epsg"])
+    envelope.set("srsDimension", "3")
+
+    lower = envelope.find(f"{{{gml_ns}}}lowerCorner")
+    if lower is None:
+        lower = ET.SubElement(envelope, f"{{{gml_ns}}}lowerCorner")
+    upper = envelope.find(f"{{{gml_ns}}}upperCorner")
+    if upper is None:
+        upper = ET.SubElement(envelope, f"{{{gml_ns}}}upperCorner")
+    lower.text = f"{lower_x:.3f} {lower_y:.3f} {lower_z:.3f}"
+    upper.text = f"{upper_x:.3f} {upper_y:.3f} {upper_z:.3f}"
+
+    prepared_path.parent.mkdir(parents=True, exist_ok=True)
+    tree.write(prepared_path, encoding="utf-8", xml_declaration=True)
+    mode = "anchored local geometry at HFT Stuttgart" if (dx or dy) else "added HFT Stuttgart CRS/envelope"
+    return prepared_path, (
+        f"Prepared CityGML for fixed HFT Stuttgart ({HFT_SIMULATION_LOCATION['latitude']:.6f}, "
+        f"{HFT_SIMULATION_LOCATION['longitude']:.6f}; {HFT_SIMULATION_LOCATION['epsg']}); {mode}."
+    )
+
+
+def _simstadt_failure_reason(log: str) -> str | None:
+    text = (log or "").lower()
+    patterns = [
+        ("insufficient Java/native memory", "there is insufficient memory for the java runtime environment"),
+        ("Windows paging-file / virtual-memory exhaustion", "the paging file is too small"),
+        ("missing CityGML location", "missing location"),
+        ("missing CityGML envelope/SRS", "envelope missing in city gml model"),
+        ("SimStadt workflow exception", "workflow couldn't be launched"),
+        ("SimStadt workflow exception", "workflow failed"),
+        ("SimStadt fatal error", "fatalerror"),
+    ]
+    for reason, marker_text in patterns:
+        if marker_text in text:
+            return reason
+    return None
+
+
+def _stage_from_simstadt_log(log: str, workflow: str) -> tuple[int, str]:
+    stages = SIMSTADT_WORKFLOW_STAGES.get(workflow, [])
+    aliases = {
+        "Import CityGML": ("ImportCityGml", "Import City Gml"),
+        "Geometric Preprocessor": ("GeometricPreprocessor",),
+        "Geometric Estimator": ("GeometricEstimator",),
+        "Physics Preprocessor": ("PhysicsPreprocessor",),
+        "Usage Preprocessor": ("UsagePreprocessor", "Usage Preprocessor"),
+        "Systems Preprocessor": ("SystemsPreprocessor",),
+        "Weather Processor": ("WeatherProcessor", "Weather Processor"),
+        "Irradiance Processor": ("IrradianceProcessor",),
+        "Monthly Energy Balance": ("MonthlyEnergyBalance", "Monthly Energy Balance"),
+        "Hourly Heat Demand": ("HourlyHeatDemand", "Hourly Heat Demand"),
+        "Primary Energy & CO₂": ("PrimaryEnergy", "Primary Energy"),
+    }
+    lower_log = (log or "").lower()
+    best = (0, "Initializing / preparing workflow")
+    for idx, stage in enumerate(stages, start=1):
+        for alias in aliases.get(stage, (stage,)):
+            pos = lower_log.rfind(alias.lower())
+            if pos >= 0 and pos >= best[0]:
+                best = (idx, stage)
+                break
+    return best
+
 
 # ---------------------------------------------------------------------------
 # IFC/CityGML bridge helpers
@@ -1517,6 +1739,19 @@ def render_simstadt_sandbox(
         if not source.exists():
             st.error(f"CityGML source does not exist: {source}")
             return
+
+        prepared_gml = run_root / f"{source.stem}_hft.gml"
+        prepared_source, preparation_message = prepare_hft_simulation_citygml(
+            source,
+            prepared_gml,
+        )
+        if prepared_source is None:
+            st.error("Could not prepare CityGML for the fixed HFT Stuttgart location.")
+            st.code(preparation_message)
+            return
+        if prepared_source != source:
+            st.info(preparation_message)
+            source = prepared_source
 
         started, message = start_simstadt_background(source, workflow, output_dir)
         if started:
