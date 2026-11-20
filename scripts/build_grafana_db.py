@@ -253,7 +253,7 @@ def dashboard_json(rooms: list[tuple], station: str, flat: bool = False) -> dict
     stat_mean = _target("A", f"SELECT ROUND(AVG(co2_mean)) AS \"Mean CO2 (ppm)\" FROM co2_hourly WHERE {room_where} AND {time_rng}", "table")
     stat_temp = _target("A", f"SELECT ROUND(AVG(temp_c), 1) AS \"Mean room temp (°C)\" FROM (SELECT temp_c FROM temp_hourly WHERE {room_where} AND {time_rng} "
                            f"UNION ALL SELECT temp_c FROM co2_hourly WHERE {room_where} AND {time_rng})", "table")
-    diurnal = _target("A", f"SELECT strftime('%H', ts, 'unixepoch') AS hour, ROUND(AVG(co2_mean)) AS \"Mean CO2 (ppm)\" "
+    diurnal = _target("A", f"SELECT strftime('%H', ts, 'unixepoch') || 'h' AS hour, ROUND(AVG(co2_mean)) AS \"Mean CO2 (ppm)\" "
                            f"FROM co2_hourly WHERE {room_where} AND {time_rng} GROUP BY hour ORDER BY hour", "table")
     table = _target("A", f"SELECT room AS Room, MAX(floor) AS Floor, ROUND(AVG(co2_mean)) AS \"Mean CO2\", ROUND(MAX(co2_max)) AS \"Peak CO2\", "
                          f"SUM(co2_mean >= 1000) AS \"Hours >= 1000 ppm\", ROUND(AVG(temp_c), 1) AS \"Mean C (CO2 sensor)\" "
@@ -275,7 +275,8 @@ def dashboard_json(rooms: list[tuple], station: str, flat: bool = False) -> dict
         _panel(6, "Temperature: room, CO2 sensor and outdoor", "timeseries", 0, 13, 16, 9, [t_room, t_co2, t_out],
                fieldConfig={"defaults": {"unit": "celsius", "custom": {"lineWidth": 1, "spanNulls": 3600000}}, "overrides": []}, options=ts_opts),
         _panel(7, "Relative humidity", "timeseries", 0, 22, 16, 7, [hum], fieldConfig={"defaults": {"unit": "percent", "custom": {"lineWidth": 1, "spanNulls": 3600000}}, "overrides": []}, options=ts_opts),
-        _panel(8, "Average CO2 by hour of day", "barchart", 16, 0, 8, 9, [diurnal], fieldConfig={"defaults": {"unit": "ppm"}, "overrides": []}, options={"xField": "hour", "legend": {"showLegend": False}}),
+        _panel(8, "Average CO2 by hour of day", "barchart", 16, 0, 8, 9, [diurnal], fieldConfig={"defaults": {}, "overrides": [{"matcher": {"id": "byName", "options": "Mean CO2 (ppm)"}, "properties": [{"id": "unit", "value": "ppm"}, {"id": "decimals", "value": 0}]}]},
+               options={"xField": "hour", "xTickLabelRotation": 0, "xTickLabelSpacing": 0, "showValue": "never", "legend": {"showLegend": False}}),
         _panel(9, "All rooms in building: CO2 (selected time range)", "table", 16, 9, 8, 10, [table], fieldConfig={"defaults": {}, "overrides": []}),
         _panel(10, "All rooms in building: temperature (selected time range)", "table", 16, 19, 8, 10, [table_t], fieldConfig={"defaults": {}, "overrides": []}),
     ]
