@@ -15,8 +15,10 @@ $dash = Join-Path $Project "grafana\dashboards"
 if (-not (Test-Path $db)) { Write-Warning "$db not found yet. Run: python scripts\build_grafana_db.py" }
 
 # 1. plugin
-if (Test-Path "$bin\grafana-cli.exe") { & "$bin\grafana-cli.exe" --homepath $GrafanaHome plugins install frser-sqlite-datasource }
-else { & "$bin\grafana.exe" cli --homepath $GrafanaHome plugins install frser-sqlite-datasource }
+$plugins = Join-Path $GrafanaHome "data\plugins"
+if (Test-Path "$bin\grafana-cli.exe") { & "$bin\grafana-cli.exe" --pluginsDir $plugins plugins install frser-sqlite-datasource }
+else { & "$bin\grafana.exe" cli --pluginsDir $plugins plugins install frser-sqlite-datasource }
+if (-not (Test-Path "$plugins\frser-sqlite-datasource\plugin.json")) { Write-Warning "Plugin not found in $plugins after install." }
 
 # 2. provisioning (data source + dashboard folder)
 $prov = Join-Path $GrafanaHome "conf\provisioning"
