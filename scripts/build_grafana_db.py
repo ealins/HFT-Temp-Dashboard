@@ -240,7 +240,7 @@ def dashboard_json(rooms: list[tuple], station: str, flat: bool = False) -> dict
     buildings = sorted({r[0] for r in ok})
     building_query = ",".join(buildings)
     time_rng = "ts >= $__from / 1000 AND ts <= $__to / 1000"
-    bwhere = "building = '$building'"
+    bwhere = "building = '$building'" if flat else "building = '$building' AND floor = '$floor'"
 
     co2 = _target("A", _sql_range("co2_raw", "co2_hourly", "co2", "co2_mean", room_where), name="CO2 (ppm)")
     t_room = _target("A", _sql_range("temp_raw", "temp_hourly", "temp_c", "temp_c", room_where), name="Room temperature sensor")
@@ -277,8 +277,8 @@ def dashboard_json(rooms: list[tuple], station: str, flat: bool = False) -> dict
         _panel(7, "Relative humidity", "timeseries", 0, 22, 16, 7, [hum], fieldConfig={"defaults": {"unit": "percent", "custom": {"lineWidth": 1, "spanNulls": 3600000}}, "overrides": []}, options=ts_opts),
         _panel(8, "Average CO2 by hour of day", "barchart", 16, 0, 8, 9, [diurnal], fieldConfig={"defaults": {}, "overrides": [{"matcher": {"id": "byName", "options": "Mean CO2 (ppm)"}, "properties": [{"id": "unit", "value": "ppm"}, {"id": "decimals", "value": 0}]}]},
                options={"xField": "hour", "xTickLabelRotation": 0, "xTickLabelSpacing": 0, "showValue": "never", "legend": {"showLegend": False}}),
-        _panel(9, "All rooms in building: CO2 (selected time range)", "table", 16, 9, 8, 10, [table], fieldConfig={"defaults": {}, "overrides": []}),
-        _panel(10, "All rooms in building: temperature (selected time range)", "table", 16, 19, 8, 10, [table_t], fieldConfig={"defaults": {}, "overrides": []}),
+        _panel(9, "Rooms on this floor: CO2 (selected time range)", "table", 16, 9, 8, 10, [table], fieldConfig={"defaults": {}, "overrides": []}),
+        _panel(10, "Rooms on this floor: temperature (selected time range)", "table", 16, 19, 8, 10, [table_t], fieldConfig={"defaults": {}, "overrides": []}),
     ]
     return {
         "uid": "hft-rooms", "title": "HFT indoor climate", "tags": ["hft"], "timezone": "utc", "schemaVersion": 39, "version": 1,
