@@ -38,7 +38,7 @@ def grafana_available(timeout: float = 1.0) -> bool:
 
 
 def render_grafana(building: str, floor: str, room: str | None, start, end) -> None:
-        if not grafana_available():
+    if not grafana_available():
         st.warning(f"Grafana is not reachable at {GRAFANA_URL}. Start it (see README, section Grafana), then reload this view.")
         st.caption("Set the GRAFANA_URL environment variable if Grafana runs on another address.")
         return
