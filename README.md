@@ -93,6 +93,7 @@ docker compose up -d                  # http://localhost:3000  (admin / admin), 
 - Timestamps are local clock times stored as UTC and the dashboard uses the UTC time zone, so clock labels match the readings.
 - Outdoor temperature (DWD) is overlaid if `data/outdoor.db` exists (`python scripts\ingest_outdoor.py`).
 - Uses the `frser-sqlite-datasource` plugin (installed by the compose file). The database file must not be named `grafana.db`.
+- In the dashboard, the sidebar view **Grafana** embeds this Grafana dashboard for the selected room and time window (needs Grafana running; set `GRAFANA_URL` if it is not at http://localhost:3000). The compose file already enables embedding and read-only anonymous viewing; for a Windows install put `allow_embedding = true` under `[security]` and `enabled = true`, `org_role = Viewer` under `[auth.anonymous]` in `conf\custom.ini`.
 - Without Docker: install Grafana OSS for Windows, run `grafana cli plugins install frser-sqlite-datasource`, then copy `grafana\provisioning` and `grafana\dashboards` into its config and point the data source path to `data\grafana\hft_sensors.db`.
 
 ## SimStadt Analysis

@@ -9,6 +9,9 @@ services:
       GF_INSTALL_PLUGINS: frser-sqlite-datasource
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_USERS_DEFAULT_THEME: light
+      GF_SECURITY_ALLOW_EMBEDDING: "true"        # lets the Streamlit app show Grafana in a frame
+      GF_AUTH_ANONYMOUS_ENABLED: "true"         # read-only viewing without login (local use only)
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/hft-rooms.json
     volumes:
       - grafana-data:/var/lib/grafana
