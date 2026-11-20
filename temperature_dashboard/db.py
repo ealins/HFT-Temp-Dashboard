@@ -225,9 +225,10 @@ def room_span(kind: str, building: str, room: str) -> dict:
     return {"start": row[0], "end": row[1], "rows": row[2]}
 
 
-def query(kind: str, building: str, room: str, start=None, end=None) -> pd.DataFrame:
+def query(kind: str, building: str, room: str, start=None, end=None, exact: bool = False) -> pd.DataFrame:
+    """exact=True: always actual readings (never hourly means), still from the fast copy when it is usable."""
     if fastdb.available(kind, db_path(kind)):
-        return fastdb.query(kind, building, room, start, end)
+        return fastdb.query(kind, building, room, start, end, raw_only=exact)
     clauses = ["building = ?", "room = ?"]
     params = [building, room]
     if start is not None:

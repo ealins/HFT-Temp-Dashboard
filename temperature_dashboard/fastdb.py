@@ -3,7 +3,8 @@
 Integer timestamps, one index per room and hourly summaries make selectors and charts load in milliseconds
 instead of scanning the 10 M-row source database. The copy is used only while the source file still has the size
 it had when the copy was built; after adding data, re-run build_grafana_db.py (otherwise the slow path is used).
-Windows up to RAW_MAX_DAYS return raw readings, longer windows hourly means (df.attrs["resolution"] == "hourly").
+Windows up to RAW_MAX_DAYS return raw readings, longer windows hourly means (df.attrs["resolution"] == "hourly"),
+unless raw_only=True (used by the Normal/Technical charts, which promise actual readings).
 """
 from __future__ import annotations
 
@@ -62,14 +63,14 @@ def room_span(kind: str, building: str, room: str) -> dict:
     return {"start": pd.to_datetime(row[0], unit="s").isoformat(), "end": pd.to_datetime(row[1] + 3599, unit="s").isoformat(), "rows": int(row[2])}
 
 
-def query(kind: str, building: str, room: str, start=None, end=None) -> pd.DataFrame:
+def query(kind: str, building: str, room: str, start=None, end=None, raw_only: bool = False) -> pd.DataFrame:
     _, raw, hourly = _KIND[kind]
     span = room_span(kind, building, room)
     if not span:
         return pd.DataFrame()
     lo = _ts(start) if start is not None else _ts(span["start"])
     hi = _ts(end) if end is not None else _ts(span["end"])
-    use_raw = (hi - lo) <= RAW_MAX_DAYS * 86400
+    use_raw = raw_only or (hi - lo) <= RAW_MAX_DAYS * 86400   # raw_only: always actual readings, never hourly means
     where = "building=? AND room=? AND ts>=? AND ts<=?"
     params = (building, room, lo, hi)
     if kind == "CO₂":

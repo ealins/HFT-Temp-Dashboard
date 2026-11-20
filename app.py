@@ -616,7 +616,7 @@ def _collect(kind: str, building: str, room: str, start, end, source_mode: str, 
     frames = []
     error = None
     if source_mode in ("Historical uploads", "Historical + live") and exists(kind):
-        hist = query(kind, building, room, start, end)
+        hist = query(kind, building, room, start, end, exact=True)
         if not hist.empty:
             frames.append(hist)
     if source_mode in ("Live servers", "Historical + live") and cfg["url"]:
