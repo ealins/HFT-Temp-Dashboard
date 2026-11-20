@@ -190,8 +190,8 @@ def _panel(pid: int, title: str, ptype: str, x: int, y: int, w: int, h: int, tar
     return panel
 
 
-def _var_query(sql: str) -> dict:
-    return {"queryText": sql, "rawQueryText": sql, "queryType": "table", "timeColumns": []}
+def _var_query(sql: str) -> str:
+    return sql   # the SQLite plugin wraps a plain SQL string itself (an object fails to unmarshal)
 
 
 def templating(labels: list, default: tuple, flat: bool) -> list:
