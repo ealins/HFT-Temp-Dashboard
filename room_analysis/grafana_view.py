@@ -26,7 +26,7 @@ def dashboard_url(building: str, room: str | None, start, end, kiosk: bool = Tru
     if room:
         params["var-room"] = f"{building}/{room}" if flat else room
     url = f"{GRAFANA_URL}{DASHBOARD_PATH}?{urllib.parse.urlencode(params)}"
-    return url + ("&kiosk" if kiosk else "")
+    return url + ("&kiosk&_dash.hideTimePicker=true&_dash.hideVariables=true&_dash.hideLinks=true" if kiosk else "")
 
 
 @st.cache_data(ttl=30, show_spinner=False)

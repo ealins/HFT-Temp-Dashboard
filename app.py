@@ -753,8 +753,15 @@ def render_dashboard():
 
     temp_rooms = rooms_available("Temperature", building, floor)
     co2_rooms = rooms_available("CO₂", building, floor)
-    temp_room = st.sidebar.selectbox("Temperature room", temp_rooms, key="temp_room") if temp_rooms else None
-    co2_room = st.sidebar.selectbox("CO₂ room", co2_rooms, key="co2_room") if co2_rooms else None
+    if ui_mode == "Normal" and grafana_available():
+        # One simple Room picker: the Grafana charts show whichever sensors the room has.
+        all_rooms = sorted(set(temp_rooms) | set(co2_rooms))
+        room = st.sidebar.selectbox("Room", all_rooms, key="grafana_room") if all_rooms else None
+        temp_room = room if room in temp_rooms else None
+        co2_room = room if room in co2_rooms else None
+    else:
+        temp_room = st.sidebar.selectbox("Temperature room", temp_rooms, key="temp_room") if temp_rooms else None
+        co2_room = st.sidebar.selectbox("CO₂ room", co2_rooms, key="co2_room") if co2_rooms else None
 
     spans = selected_spans(building, temp_room, co2_room)
     span_start, span_end, span_basis = choose_span_basis(spans)
