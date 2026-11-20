@@ -759,6 +759,10 @@ def render_dashboard():
         room = st.sidebar.selectbox("Room", all_rooms, key="grafana_room") if all_rooms else None
         temp_room = room if room in temp_rooms else None
         co2_room = room if room in co2_rooms else None
+        tsrc_label = st.sidebar.radio(
+            "Temperature source", ["Both", "Temperature sensor", "CO₂ sensor thermometer"], key="grafana_tsrc",
+            help="The temperature sensors (Excel exports) and the thermometers inside the CO₂ sensors are different devices. "
+                 "Before mid-2025 only the CO₂ sensor thermometers exist.")
     else:
         temp_room = st.sidebar.selectbox("Temperature room", temp_rooms, key="temp_room") if temp_rooms else None
         co2_room = st.sidebar.selectbox("CO₂ room", co2_rooms, key="co2_room") if co2_rooms else None
@@ -772,7 +776,8 @@ def render_dashboard():
     st.sidebar.caption(f"Window: {start:%d %b %Y %H:%M} → {end:%d %b %Y %H:%M}")
 
     if ui_mode == "Normal" and grafana_available():
-        render_grafana(building, floor, co2_room or temp_room, start, end)
+        render_grafana(building, floor, co2_room or temp_room, start, end,
+                       {"Both": "both", "Temperature sensor": "sensor"}.get(st.session_state.get("grafana_tsrc", "Both"), "co2"))
         return
 
     if ui_mode == "Room Analysis":

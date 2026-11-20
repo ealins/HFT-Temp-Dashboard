@@ -9,7 +9,7 @@ It is a **simple steady-state model**. It is good for comparing rooms and testin
 | Input | Where it comes from | Notes |
 |---|---|---|
 | CO₂ (ppm) | CO₂ sensor database | Every CO₂ sensor also records temperature and humidity |
-| Indoor temperature | The room's temperature sensor; if the room has none, the **thermometer inside its CO₂ sensor** | The source is shown under the heat-balance numbers |
+| Indoor temperature | Choose the source at the top: **Auto** = the room's temperature sensor, and if it has none, the **thermometer inside its CO₂ sensor**; or force one of the two | The source in use is shown under the heat-balance numbers. These are different devices and may read differently: the temperature sensors (Excel exports) only exist from mid-2025, before that only the CO₂ sensors' thermometers exist |
 | Outdoor temperature | DWD station Stuttgart-Echterdingen (`data/outdoor.db`); otherwise Open-Meteo online; otherwise a fixed value you set | Hourly. The airport is on the Filder plateau and is usually a little colder than the campus |
 | Room area, volume, height | IFC model, extracted once per building into `envelope.json` | The view never opens the IFC while running |
 | External wall, window and door areas, facade direction | IFC geometry (see section 5) | Matched by geometry, not by the IFC "external" flags, which are unreliable |

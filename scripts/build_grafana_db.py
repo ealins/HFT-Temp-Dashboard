@@ -202,30 +202,41 @@ def _panel(pid: int, title: str, ptype: str, x: int, y: int, w: int, h: int, tar
     return panel
 
 
+TSRC_QUERY = "Both : both,Temperature sensor : sensor,CO2 sensor thermometer : co2"
+
+
+def tsrc_variable() -> dict:
+    """Which temperature source to draw: the separate temperature sensors (Excel exports), the CO2 sensors' own thermometer, or both."""
+    return {"name": "tsrc", "label": "Temperature source", "type": "custom", "query": TSRC_QUERY, "multi": False,
+            "includeAll": False, "options": [], "current": {"text": "Both", "value": "both", "selected": True}}
+
+
 def _var_query(sql: str) -> str:
     return sql   # the SQLite plugin wraps a plain SQL string itself (an object fails to unmarshal)
 
 
 def templating(labels: list, default: tuple, flat: bool) -> list:
-    """Building -> Floor -> Room pickers (query variables), or one flat room list with --flat-pickers."""
+    """Building -> Floor -> Room pickers (query variables), or one flat room list with --flat-pickers; plus the temperature source."""
     if flat:
         room_query = ",".join(f"{text} : {value}" for text, value, _, _ in labels)
         buildings = ",".join(sorted({v.split("/")[0] for _, v, _, _ in labels}))
-        return [
+        pickers = [
             {"name": "room", "label": "Room", "type": "custom", "query": room_query,
              "current": {"text": default[0], "value": default[1], "selected": True}, "options": [], "multi": False, "includeAll": False},
             {"name": "building", "label": "Building (tables)", "type": "custom", "query": buildings,
              "current": {"text": default[1].split("/")[0], "value": default[1].split("/")[0], "selected": True},
              "options": [], "multi": False, "includeAll": False}]
-    common = {"type": "query", "datasource": DS, "refresh": 1, "sort": 1, "multi": False, "includeAll": False, "options": []}
-    return [
-        {**common, "name": "building", "label": "Building",
-         "query": _var_query("SELECT DISTINCT building FROM rooms ORDER BY building"), "current": {}},
-        {**common, "name": "floor", "label": "Floor", "sort": 0,
-         "query": _var_query("SELECT floor FROM rooms WHERE building = '$building' GROUP BY floor ORDER BY MIN(room)"), "current": {}},
-        {**common, "name": "room", "label": "Room",
-         "query": _var_query("SELECT room FROM rooms WHERE building = '$building' AND floor = '$floor' ORDER BY room"), "current": {}},
-    ]
+    else:
+        common = {"type": "query", "datasource": DS, "refresh": 1, "sort": 1, "multi": False, "includeAll": False, "options": []}
+        pickers = [
+            {**common, "name": "building", "label": "Building",
+             "query": _var_query("SELECT DISTINCT building FROM rooms ORDER BY building"), "current": {}},
+            {**common, "name": "floor", "label": "Floor", "sort": 0,
+             "query": _var_query("SELECT floor FROM rooms WHERE building = '$building' GROUP BY floor ORDER BY MIN(room)"), "current": {}},
+            {**common, "name": "room", "label": "Room",
+             "query": _var_query("SELECT room FROM rooms WHERE building = '$building' AND floor = '$floor' ORDER BY room"), "current": {}},
+        ]
+    return pickers + [tsrc_variable()]
 
 
 def dashboard_json(rooms: list[tuple], station: str, flat: bool = False) -> dict:
@@ -243,16 +254,16 @@ def dashboard_json(rooms: list[tuple], station: str, flat: bool = False) -> dict
     bwhere = "building = '$building'" if flat else "building = '$building' AND floor = '$floor'"
 
     co2 = _target("A", _sql_range("co2_raw", "co2_hourly", "co2", "co2_mean", room_where), name="CO2 (ppm)")
-    t_room = _target("A", _sql_range("temp_raw", "temp_hourly", "temp_c", "temp_c", room_where), name="Room temperature sensor")
-    t_co2 = _target("B", _sql_range("co2_raw", "co2_hourly", "temp_c", "temp_c", room_where), name="CO2 sensor thermometer")
+    t_room = _target("A", _sql_range("temp_raw", "temp_hourly", "temp_c", "temp_c", room_where + " AND '$tsrc' <> 'co2'"), name="Room temperature sensor")
+    t_co2 = _target("B", _sql_range("co2_raw", "co2_hourly", "temp_c", "temp_c", room_where + " AND '$tsrc' <> 'sensor'"), name="CO2 sensor thermometer")
     t_out = _target("C", f"SELECT ts AS time, temp_c AS \"Outdoor (DWD)\" FROM outdoor WHERE {time_rng} ORDER BY ts")
     hum = _target("A", _sql_range("co2_raw", "co2_hourly", "humidity", "humidity", room_where), name="Humidity (%)")
 
     stat_hours = _target("A", f"SELECT COUNT(*) AS \"Hours with mean ≥ 1000 ppm\" FROM co2_hourly WHERE {room_where} AND {time_rng} AND co2_mean >= 1000", "table")
     stat_peak = _target("A", f"SELECT ROUND(MAX(co2_max)) AS \"Peak CO2 (ppm)\" FROM co2_hourly WHERE {room_where} AND {time_rng}", "table")
     stat_mean = _target("A", f"SELECT ROUND(AVG(co2_mean)) AS \"Mean CO2 (ppm)\" FROM co2_hourly WHERE {room_where} AND {time_rng}", "table")
-    stat_temp = _target("A", f"SELECT ROUND(AVG(temp_c), 1) AS \"Mean room temp (°C)\" FROM (SELECT temp_c FROM temp_hourly WHERE {room_where} AND {time_rng} "
-                           f"UNION ALL SELECT temp_c FROM co2_hourly WHERE {room_where} AND {time_rng})", "table")
+    stat_temp = _target("A", f"SELECT ROUND(AVG(temp_c), 1) AS \"Mean room temp (°C)\" FROM (SELECT temp_c FROM temp_hourly WHERE {room_where} AND {time_rng} AND '$tsrc' <> 'co2' "
+                           f"UNION ALL SELECT temp_c FROM co2_hourly WHERE {room_where} AND {time_rng} AND '$tsrc' <> 'sensor')", "table")
     diurnal = _target("A", f"SELECT strftime('%H', ts, 'unixepoch') || 'h' AS hour, ROUND(AVG(co2_mean)) AS \"Mean CO2 (ppm)\" "
                            f"FROM co2_hourly WHERE {room_where} AND {time_rng} GROUP BY hour ORDER BY hour", "table")
     table = _target("A", f"SELECT room AS Room, MAX(floor) AS Floor, ROUND(AVG(co2_mean)) AS \"Mean CO2\", ROUND(MAX(co2_max)) AS \"Peak CO2\", "

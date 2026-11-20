@@ -91,14 +91,21 @@ def _room_env(env: dict | None, floor: str, room: str) -> dict | None:
     return env["rooms"].get(f"{floor}|{room}")
 
 
-def _indoor_temperature(temp_df: pd.DataFrame, co2_df: pd.DataFrame) -> tuple[pd.DataFrame, str]:
-    """Temperature sensor if the room has one, else the CO2 sensor's built-in temperature."""
-    if not temp_df.empty:
+TEMP_SOURCES = ["Auto (temperature sensor, else CO₂ sensor thermometer)", "Temperature sensor only", "CO₂ sensor thermometer only"]
+
+
+def _indoor_temperature(temp_df: pd.DataFrame, co2_df: pd.DataFrame, source: str = TEMP_SOURCES[0]) -> tuple[pd.DataFrame, str]:
+    """Indoor temperature. Auto: the room's temperature sensor, else the CO2 sensor's built-in thermometer.
+    The two are different devices; the other options force one of them."""
+    empty = pd.DataFrame(columns=["timestamp", "value"])
+    use_sensor = source in (TEMP_SOURCES[0], TEMP_SOURCES[1])
+    use_co2 = source in (TEMP_SOURCES[0], TEMP_SOURCES[2])
+    if use_sensor and not temp_df.empty:
         return temp_df[["timestamp", "value"]], "temperature sensor"
-    if not co2_df.empty and "secondary_temperature" in co2_df and co2_df["secondary_temperature"].notna().any():
+    if use_co2 and not co2_df.empty and "secondary_temperature" in co2_df and co2_df["secondary_temperature"].notna().any():
         out = co2_df[["timestamp", "secondary_temperature"]].rename(columns={"secondary_temperature": "value"}).dropna()
         return out, "temperature of the CO₂ sensor"
-    return pd.DataFrame(columns=["timestamp", "value"]), ""
+    return empty, ""
 
 
 def _fig_base(height=300) -> go.Figure:
@@ -219,7 +226,7 @@ def _tab_heat(room_env: dict | None, indoor: pd.DataFrame, indoor_src: str, ach:
 
 
 def _tab_compare(building: str, floor: str, rooms: pd.DataFrame, env: dict | None, u: dict, b_ground: float,
-                 b_atrium: float, t_start, t_end):
+                 b_atrium: float, t_start, t_end, temp_source: str = TEMP_SOURCES[0]):
     scope = st.radio("Rooms", [f"This floor ({floor})", "Whole building (slower)"], horizontal=True, key="cmp_scope")
     sub = rooms if scope.startswith("Whole") else rooms[rooms["floor"] == floor]
     sub = sub.head(60)
@@ -232,7 +239,7 @@ def _tab_compare(building: str, floor: str, rooms: pd.DataFrame, env: dict | Non
         bar.progress((i + 1) / len(sub))
         temp_df = _series("Temperature", building, r.room, t_start, t_end)
         co2_df = _series("CO₂", building, r.room, t_start, t_end)
-        indoor, _ = _indoor_temperature(temp_df, co2_df)
+        indoor, _ = _indoor_temperature(temp_df, co2_df, temp_source)
         row = {"Floor": r.floor, "Room": r.room, "Sensors": r.sensors}
         if not indoor.empty:
             row["Mean °C"] = round(float(indoor["value"].mean()), 1)
@@ -345,7 +352,7 @@ def render_room_analysis(building: str, floor: str, start: pd.Timestamp | None =
     on_floor = rooms[rooms["floor"] == floor]
     pool = on_floor if not on_floor.empty else rooms
     labels = {f"{r.room} · {r.floor} · {r.sensors}": r for r in pool.itertuples()}
-    top = st.columns([1.4, 1.2, 1.4])
+    top = st.columns([1.4, 1.0, 1.6, 1.4])
     choice = top[0].selectbox("Room", list(labels), key="ra_room")
     sel = labels[choice]
     win_choice = top[1].selectbox("Window", WINDOW_CHOICES, index=1, key="ra_window")
@@ -355,11 +362,14 @@ def render_room_analysis(building: str, floor: str, start: pd.Timestamp | None =
         return
     anchor = min(pd.Timestamp(end), data_span[1])      # the dashboard's end, or the room's last reading if earlier
     t_start, t_end = _window(anchor, win_choice, data_span[0])
-    top[2].caption(f"{t_start:%d %b %Y %H:%M} → {t_end:%d %b %Y %H:%M}  \nRoom data: {data_span[0]:%d %b %Y} → {data_span[1]:%d %b %Y}")
+    temp_source = top[2].selectbox("Temperature source", TEMP_SOURCES, key="ra_tsrc",
+                                   help="Temperature sensors (Excel exports) and the thermometers inside the CO₂ sensors are "
+                                        "different devices and may read differently.")
+    top[3].caption(f"{t_start:%d %b %Y %H:%M} → {t_end:%d %b %Y %H:%M}  \nRoom data: {data_span[0]:%d %b %Y} → {data_span[1]:%d %b %Y}")
 
     temp_df = _series("Temperature", building, sel.room, t_start, t_end)
     co2_df = _series("CO₂", building, sel.room, t_start, t_end)
-    indoor, indoor_src = _indoor_temperature(temp_df, co2_df)
+    indoor, indoor_src = _indoor_temperature(temp_df, co2_df, temp_source)
     room_env = _room_env(env, sel.floor, sel.room)
 
     with st.expander("Assumptions (editable)", expanded=False):
@@ -413,7 +423,7 @@ def render_room_analysis(building: str, floor: str, start: pd.Timestamp | None =
     with tabs[1]:
         _tab_heat(room_env, indoor, indoor_src, ach, u, b_ground, b_atrium, outdoor, outdoor_src, out_manual, in_manual, t_start, t_end)
     with tabs[2]:
-        _tab_compare(building, sel.floor, rooms, env, u, b_ground, b_atrium, t_start, t_end)
+        _tab_compare(building, sel.floor, rooms, env, u, b_ground, b_atrium, t_start, t_end, temp_source)
     with tabs[3]:
         ti = ph.hourly(indoor) if not indoor.empty else pd.Series(dtype=float)
         if len(ti):
