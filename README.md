@@ -52,6 +52,8 @@ The **Room Analysis** view works at room level from sensor data and the IFC geom
 | **Compare rooms** | Floor or building table: mean temperature, share of time above/below comfort limits, hours above 1000 ppm, window share and main facade, transmission UA |
 | **Ventilation vs heat** | Steady-state CO₂ and ventilation heat for different air-change rates, the air-change rate needed to stay under the CO₂ limit, and the effect of heat recovery |
 
+The full method (formulas, assumptions, limits) is written in [`room_analysis/GUIDE.md`](room_analysis/GUIDE.md) and also shown inside the view, on the **How it works** tab.
+
 How it works:
 
 - Room areas, volumes, external wall and window areas and facade orientations come from the IFC. They are extracted once per building into `data/ifc_models/<building>/envelope.json`.

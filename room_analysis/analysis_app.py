@@ -6,6 +6,7 @@ scripts/extract_room_envelope.py. It never opens the IFC and never runs SimStadt
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -109,6 +110,14 @@ def _fig_base(height=300) -> go.Figure:
 # ---------------------------------------------------------------------------
 # tabs
 # ---------------------------------------------------------------------------
+def _tab_guide():
+    """Plain-language method description (room_analysis/GUIDE.md), shown so anyone can see how results are obtained."""
+    try:
+        st.markdown((Path(__file__).with_name("GUIDE.md")).read_text(encoding="utf-8"))
+    except OSError:
+        st.info("The method guide (room_analysis/GUIDE.md) was not found.")
+
+
 def _tab_ventilation(co2: pd.DataFrame, limit: float, c_out: float, episodes: pd.DataFrame, ach: float | None, n_good: int):
     if co2.empty:
         st.info("This room has no CO₂ sensor in the selected window. Pick a CO₂ room, or set the air-change rate "
@@ -398,7 +407,7 @@ def render_room_analysis(building: str, floor: str, start: pd.Timestamp | None =
 
     outdoor, outdoor_src = _outdoor(t_start, t_end, use_weather)
 
-    tabs = st.tabs(["Occupancy & ventilation", "Heat balance", "Compare rooms", "Ventilation vs heat"])
+    tabs = st.tabs(["Occupancy & ventilation", "Heat balance", "Compare rooms", "Ventilation vs heat", "How it works"])
     with tabs[0]:
         _tab_ventilation(co2_for_ach if ach_source == "From another CO₂ room" else co2_df, limit, c_out, episodes, ach_meas, n_good)
     with tabs[1]:
@@ -416,3 +425,5 @@ def render_room_analysis(building: str, floor: str, start: pd.Timestamp | None =
         occupied = ph.co2_stats(co2_for_ach, limit_ppm=limit).get("hours_occupied_proxy", 0.0) if not co2_for_ach.empty else 0.0
         days_in_window = max((t_end - t_start).total_seconds() / 86400, 1e-9)
         _tab_scenarios(room_env, ach, c_out, limit, mean_dt, occupied / days_in_window, persons)
+    with tabs[4]:
+        _tab_guide()
