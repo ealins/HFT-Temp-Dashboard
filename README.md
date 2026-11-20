@@ -2,7 +2,7 @@
 
 A web-based dashboard for monitoring, exploring, and analysing indoor **Temperature** and **CO₂** conditions across buildings, floors, and rooms.
 
-The dashboard combines sensor data with **IFC building models**, interactive 3D room context, floor plans, and optional **SimStadt** energy and environmental analysis.
+The dashboard combines sensor data with **IFC building models**, interactive 3D room context, floor plans, a room-level **Room Analysis** (ventilation, occupancy, heat balance), and optional **SimStadt** energy analysis that runs in the terminal.
 
 ## Features
 
@@ -41,36 +41,85 @@ An administrative interface allows authorised users to:
 - Configure model roles and active models.
 - Associate PDF floor plans with buildings and floors.
 
+## Room Analysis
+
+The **Room Analysis** view works at room level from sensor data and the IFC geometry. It does not use SimStadt and never opens the IFC while the dashboard runs.
+
+| Tab | What it gives |
+|---|---|
+| **Occupancy & ventilation** | Hours above the CO₂ limit, occupied-hours proxy, and an air-change rate fitted from CO₂ decay after people leave |
+| **Heat balance** | Heat-loss coefficient per element (external walls, windows, doors, roof, ground floor, atrium side, ventilation) and heat loss in kWh over the chosen window |
+| **Compare rooms** | Floor or building table: mean temperature, share of time above/below comfort limits, hours above 1000 ppm, window share and main facade, transmission UA |
+| **Ventilation vs heat** | Steady-state CO₂ and ventilation heat for different air-change rates, the air-change rate needed to stay under the CO₂ limit, and the effect of heat recovery |
+
+How it works:
+
+- Room areas, volumes, external wall and window areas and facade orientations come from the IFC. They are extracted once per building into `data/ifc_models/<building>/envelope.json`.
+- External walls are found from geometry: a room edge counts as external when it faces outside the storey footprint, or carries a window. Edges facing an enclosed atrium are listed separately.
+- The IFC contains no usable U-values (only Revit defaults), so U-values are **assumptions**. Choose a construction standard and edit them in the view.
+- Indoor temperature comes from the room's temperature sensor or, if none exists, from the CO₂ sensor's own thermometer. Outdoor temperature comes from the local DWD data in `data/outdoor.db` (Stuttgart-Echterdingen airport by default, see below), otherwise from Open-Meteo (needs internet), otherwise from a fixed value.
+- The analysis window (24 h / 7 days / 31 days) ends at the dashboard's end, or at the room's last reading if that is earlier.
+
+> **Limits:** the model is steady-state and assumes neighbouring rooms have the same temperature. Use it to compare rooms and scenarios, not as a calibrated prediction. CO₂ sensors that read below outdoor level (calibration drift) are flagged because they make the results less reliable.
+
+Load outdoor temperature once (and again from time to time to add new hours). It downloads hourly DWD open data for the station, looked up by name, and stores it in `data/outdoor.db`:
+
+~~~text
+python scripts\ingest_outdoor.py
+python scripts\ingest_outdoor.py --station "Stuttgart (Schnarrenberg)"
+python scripts\ingest_outdoor.py --file C:\path\stundenwerte_TU_04931_akt.zip
+~~~
+
+The airport station is on the Filder plateau, roughly 100 m higher and a few kilometres from the city, so it is typically slightly colder than the campus. The Schnarrenberg station is closer to the city centre. `--file` imports a zip you downloaded yourself when the script cannot reach DWD.
+
+Extract the envelope once per building (about a minute, reads the IFC a single time):
+
+~~~text
+python scripts\extract_room_envelope.py --building 1
+~~~
+
 ## SimStadt Analysis
 
-The dashboard can be used together with **SimStadt** for building energy and environmental analysis.
+SimStadt is **never run inside Streamlit**. It runs from the terminal, so a slow or failing simulation cannot freeze the dashboard. The **SimStadt Sandbox** view only reads the finished results.
 
-Available workflows:
+~~~text
+python scripts\run_simstadt_light.py --box-only
+python scripts\run_simstadt_light.py --apps heat
+python scripts\run_simstadt_light.py --apps heat,refurb,pv
+~~~
 
-| Workflow | Description |
+`--box-only` builds the model and shows it in the Sandbox view in a few seconds without starting SimStadt. Use it as a quick check first.
+
+### Light applications
+
+| App | Description | Weight |
+|---|---|---|
+| `heat` | Monthly heat demand and KPIs | Light |
+| `refurb` | Same, after full refurbishment, to show the savings | Light |
+| `pv` | Rooftop PV yield | Light to medium |
+
+No shadow simulation is run. Each app runs in its own low-priority process with a Java memory cap (default 2 GB), a timeout (default 15 minutes), and the whole process tree is stopped if it hangs.
+
+### Scope
+
+| Option | Simulates |
 |---|---|
-| **Heat Demand** | Analyse annual building heating demand |
-| **Hourly Heat Demand** | Analyse time-dependent heating demand |
-| **Environmental / CO₂ Analysis** | Analyse environmental and CO₂-emission results |
+| default | the room selected in the dashboard |
+| `--rooms 306,307 --floor "Floor 3"` | named rooms |
+| `--scope floor` | the whole selected floor |
+| `--scope building` | the whole building |
 
-### IFC to CityGML
+SimStadt works on whole buildings. A single room becomes a standalone box with outside walls and a roof on every side, so its numbers overstate real demand. Use a single room to compare scenarios (as built against refurbished), and use `--scope floor` or `--scope building` for more realistic losses. For room-level answers use **Room Analysis**.
 
-When an appropriate Architecture IFC is available, the dashboard can prepare a **CityGML 3.0** model for SimStadt automatically.
+### Model input
 
-An existing CityGML model can also be supplied directly.
+The runner does not need the IFC → CityGML conversion. It builds a simple LoD2 block (ground, walls, flat roof) from the stored IFC room geometry, places it at the HFT location (EPSG:25832) and passes it to SimStadt through its Python API. A different CityGML file can be supplied with `--citygml`.
 
-### Sensor Data and Simulation
+Results are written to `simstadt_sandbox/outputs/<building>/light/results.json`. The Sandbox view shows the model outline, KPI tables, monthly demand and refurbishment savings, and refreshes itself while a run is in progress.
 
-Temperature and indoor CO₂ observations can provide useful measured building-condition information for interpreting simulation results.
+### Sensor data and simulation
 
-The dashboard can summarise:
-
-- observed mean and percentile Temperature,
-- observed indoor CO₂ levels,
-- an occupancy indicator derived from CO₂,
-- a diagnostic CO₂-decay ventilation indicator.
-
-These measurements can be used alongside simulation results for comparison and interpretation.
+Measured Temperature and CO₂ for the selected room are shown in the Sandbox view as context only. The SimStadt results are not calibrated against them.
 
 > **Important:** indoor CO₂ concentration is measured in **ppm**, while environmental CO₂ results from energy analysis represent emissions. They are different physical quantities and should not be compared as the same variable.
 
@@ -88,30 +137,23 @@ For IFC functionality:
 - IFC/IFCZIP building models
 - IFC files containing usable `IfcSpace` information for room-level visualisation
 
-For SimStadt analysis:
+For Room Analysis:
 
-- A working SimStadt installation or compatible execution environment
-- CityGML input, or an IFC model that can be converted to CityGML
+- The room envelope file, created once per building with `scripts/extract_room_envelope.py` (uses `ifcopenshell`, already in `requirements.txt`)
 
-### Recommended IFC → CityGML setup
+For SimStadt analysis (terminal):
 
-For Windows users, the recommended route is the **direct local TUM-GIS converter**. It avoids Docker startup and file-mount overhead and lets the dashboard reuse a cached CityGML model when the source IFC has not changed.
+- The `simstadt` Python package in the same environment
+- Java 17 or newer
+- The SimStadt application, installed by `simstadt --install` (it goes to the Desktop), or its folder given in a `.env` file as `SIMSTADT_FOLDER=...`
+- Internet access, because weather data defaults to PVGIS
+- INSEL, which the SimStadt documentation lists for the full workflow environment
 
-Run once from the repository root:
-
-~~~text
-powershell -ExecutionPolicy Bypass -File .\\scripts\\setup_ifc2citygml.ps1
-~~~
-
-The setup creates a dedicated converter environment under the local `.tools/` directory. The dashboard then detects it automatically.
-
-Docker remains available as a fallback when the local converter is not installed.
-
-The dashboard caches each IFC → CityGML conversion using the source file timestamp/size and converter version. Re-running an unchanged model therefore does not repeat the expensive geometry conversion.
+The runner checks these before starting and prints what is missing.
 
 ### SimStadt local runtime
 
-The current SimStadt CLI can be installed from PyPI and can download/install the current SimStadt runtime locally.
+The SimStadt Python package can download and install the SimStadt application locally.
 
 Run once:
 
@@ -119,11 +161,11 @@ Run once:
 powershell -ExecutionPolicy Bypass -File .\\scripts\\setup_simstadt.ps1
 ~~~
 
-The dashboard automatically looks for the local `simstadt` command or Python module before falling back to Docker.
+Alternatively run `simstadt --install` in the activated environment.
 
-The current Docker fallback image is `simstadt/simstadt:cli`.
+### Optional: IFC → CityGML converter
 
-For local SimStadt execution, the current SimStadt documentation requires Java 17+ and also lists INSEL as a required component for the full application/workflow environment.
+`scripts/setup_ifc2citygml.ps1` sets up the local TUM-GIS IFC → CityGML 3.0 converter under `.tools/`. The light SimStadt runner does not need it. It is only useful when a full-building CityGML model is wanted.
 
 ### Installation
 
@@ -201,21 +243,17 @@ For best room-level results, IFC models should contain properly defined `IfcSpac
 
 Upload a PDF floor plan and assign it to the appropriate building and floor. The floor plan can then be used as a 2D reference alongside the 3D model.
 
-### 5. Run SimStadt Analysis
+### 5. Analyse a Room
 
-From the SimStadt analysis view:
+Open **Room Analysis** in the sidebar, choose a room and a window (24 h / 7 days / 31 days), and use the four tabs. Adjust the U-values and other assumptions under **Assumptions**.
 
-1. Select the building and location of interest.
-2. Provide an existing CityGML model or use the available IFC model as the source.
-3. Select the required workflow:
-   - Heat Demand
-   - Hourly Heat Demand
-   - Environmental / CO₂ Analysis
-4. Start the analysis.
-5. Review the generated simulation results.
-6. Compare the results with the available measured building conditions.
+### 6. Run SimStadt Analysis
 
-Long analyses can continue while the dashboard remains usable, and the results can be inspected from the dashboard when processing is complete.
+1. Open **SimStadt Sandbox** once and pick the room in the dashboard. The selection is saved for the terminal runner.
+2. In the VS Code terminal, from the project folder, run `python scripts\run_simstadt_light.py --box-only`, then `--apps heat` (or `--apps heat,refurb,pv`).
+3. Watch the **SimStadt Sandbox** view: it shows the status and fills in the results when the run finishes.
+
+The dashboard stays responsive because the simulation runs in a separate terminal process.
 
 ## Data Preparation
 
@@ -284,10 +322,10 @@ Depending on the enabled functions, users can obtain:
 - room and building statistics,
 - 3D IFC visualisation,
 - floor-plan references,
-- SimStadt heating-demand results,
-- hourly heating-demand results,
-- environmental/CO₂-emission results,
-- downloadable analysis tables and simulation outputs.
+- room-level ventilation, occupancy and heat-balance results,
+- room comparison tables,
+- ventilation-scenario estimates (CO₂ against ventilation heat),
+- SimStadt heat-demand, refurbishment and rooftop-PV results.
 
 ## Data and Privacy
 
@@ -297,7 +335,7 @@ When using real building or occupancy-related data, ensure that the dataset and 
 
 ## Third-Party Attribution
 
-This dashboard uses the open-source **TUM-GIS IFC → CityGML 3.0** project to convert registered IFC building models into CityGML 3.0 for the SimStadt workflow.
+This repository includes optional setup support for the open-source **TUM-GIS IFC → CityGML 3.0** project, which converts IFC building models into CityGML 3.0. The light SimStadt runner does not use it.
 
 **Source repository:** https://github.com/tum-gis/ifc-to-citygml3
 
@@ -320,10 +358,14 @@ app.py
 
 Core functionality is organised into modules for:
 
-- dashboard and sensor analysis,
-- IFC model management and visualisation,
-- data ingestion and storage,
-- SimStadt analysis.
+- dashboard and sensor analysis (`temperature_dashboard/`),
+- IFC model management and visualisation (`temperature_dashboard/ifc_models.py`),
+- room-level analysis (`room_analysis/`: `analysis_app.py` for the view, `physics.py` for the calculations),
+- SimStadt sandbox view (`simstadt_sandbox/sandbox_app.py`, read-only),
+- terminal scripts (`scripts/`):
+  - `run_simstadt_light.py`: block model and SimStadt runs,
+  - `extract_room_envelope.py`: per-room envelope from the IFC,
+  - `ingest_excel.py`, `ingest_co2.py`: data ingestion.
 
 ## License
 

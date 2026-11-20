@@ -52,6 +52,7 @@ from temperature_dashboard.ifc_models import (
 from temperature_dashboard.ifc_viewer import build_ifc_figure
 from temperature_dashboard.server import fetch_server_data
 from simstadt_sandbox.sandbox_app import render_simstadt_sandbox
+from room_analysis.analysis_app import render_room_analysis
 
 st.set_page_config(page_title="HFT Indoor Environment Dashboard", page_icon="🌡️", layout="wide")
 
@@ -747,7 +748,7 @@ def render_dashboard():
         st.warning("No floor locations can be derived for this Building. An administrator can add Floor/Geschoss in the sensor mapping.")
         return
     floor = st.sidebar.selectbox("Floor", floors)
-    ui_mode = st.sidebar.radio("Dashboard View", ["Normal", "Technical", "3D", "SimStadt Sandbox"], horizontal=False)
+    ui_mode = st.sidebar.radio("Dashboard View", ["Normal", "Technical", "3D", "Room Analysis", "SimStadt Sandbox"], horizontal=False)
 
     temp_rooms = rooms_available("Temperature", building, floor)
     co2_rooms = rooms_available("CO₂", building, floor)
@@ -761,6 +762,10 @@ def render_dashboard():
         return
     start, end, range_choice = choose_time_range(span_start, span_end)
     st.sidebar.caption(f"Window: {start:%d %b %Y %H:%M} → {end:%d %b %Y %H:%M}")
+
+    if ui_mode == "Room Analysis":
+        render_room_analysis(building, floor, start, end)
+        return
 
     if ui_mode == "SimStadt Sandbox":
         render_simstadt_sandbox(building, floor, start, end)
