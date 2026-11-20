@@ -1,0 +1,9 @@
+apiVersion: 1
+datasources:
+  - name: HFT sensors
+    uid: hft-sqlite
+    type: frser-sqlite-datasource
+    access: proxy
+    isDefault: true
+    jsonData:
+      path: /data/hft_sensors.db

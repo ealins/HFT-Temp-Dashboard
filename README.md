@@ -78,6 +78,23 @@ Extract the envelope once per building (about a minute, reads the IFC a single t
 python scripts\extract_room_envelope.py --building 1
 ~~~
 
+## Grafana (fast charts)
+
+The sensor databases are large (CO₂: ~10 M rows, text timestamps), so long ranges are slow in the Streamlit charts.
+Grafana reads a compact copy built for fast time-range queries.
+
+```powershell
+python scripts\build_grafana_db.py     # builds data\grafana\hft_sensors.db + grafana\dashboards\hft-rooms.json (a few minutes, re-run after new data)
+cd grafana
+docker compose up -d                  # http://localhost:3000  (admin / admin), dashboard "HFT indoor climate"
+```
+
+- The copy stores integer unix-second timestamps and hourly summaries; ranges over 7 days use hourly means.
+- Timestamps are local clock times stored as UTC and the dashboard uses the UTC time zone, so clock labels match the readings.
+- Outdoor temperature (DWD) is overlaid if `data/outdoor.db` exists (`python scripts\ingest_outdoor.py`).
+- Uses the `frser-sqlite-datasource` plugin (installed by the compose file). The database file must not be named `grafana.db`.
+- Without Docker: install Grafana OSS for Windows, run `grafana cli plugins install frser-sqlite-datasource`, then copy `grafana\provisioning` and `grafana\dashboards` into its config and point the data source path to `data\grafana\hft_sensors.db`.
+
 ## SimStadt Analysis
 
 SimStadt is **never run inside Streamlit**. It runs from the terminal, so a slow or failing simulation cannot freeze the dashboard. The **SimStadt Sandbox** view only reads the finished results.

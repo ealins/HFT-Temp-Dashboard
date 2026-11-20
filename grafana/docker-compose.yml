@@ -1,0 +1,20 @@
+# Grafana for the HFT sensor data.   cd grafana ; docker compose up -d   ->  http://localhost:3000  (admin / admin)
+services:
+  grafana:
+    image: grafana/grafana-oss:latest
+    container_name: hft-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_INSTALL_PLUGINS: frser-sqlite-datasource
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_DEFAULT_THEME: light
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/hft-rooms.json
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../data/grafana:/data:ro            # hft_sensors.db, read-only
+      - ./provisioning:/etc/grafana/provisioning:ro
+      - ./dashboards:/var/lib/grafana/dashboards:ro
+    restart: unless-stopped
+volumes:
+  grafana-data:

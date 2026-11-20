@@ -20,3 +20,7 @@ simstadt_sandbox/*.jar
 
 # Local IFC → CityGML converter environment
 .tools/
+
+# Grafana copy of the sensor data (built by scripts/build_grafana_db.py)
+data/grafana/
+grafana/dashboards/hft-rooms.json
