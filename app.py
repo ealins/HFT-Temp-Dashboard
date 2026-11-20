@@ -396,7 +396,7 @@ def _ifc_version() -> int:
 
 @st.cache_data(show_spinner=False)
 def _cached_hierarchy(kind: str, version: int) -> pd.DataFrame:
-    return hierarchy(kind)
+    return hierarchy(kind, prefer_fast=True)
 
 
 @st.cache_data(show_spinner=False)

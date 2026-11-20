@@ -7,6 +7,8 @@ from typing import Iterable
 
 import pandas as pd
 
+from temperature_dashboard import fastdb
+
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
@@ -196,7 +198,10 @@ def summary(kind: str) -> dict:
     return dict(zip(["rows", "sensors", "buildings", "rooms", "start", "end", "min", "max"], row))
 
 
-def hierarchy(kind: str) -> pd.DataFrame:
+def hierarchy(kind: str, prefer_fast: bool = False) -> pd.DataFrame:
+    """Rooms and sensors. prefer_fast reads the small catalog (selectors only; it omits unassigned rooms)."""
+    if prefer_fast and fastdb.available(kind, db_path(kind)):
+        return fastdb.hierarchy(kind)
     if not exists(kind):
         return pd.DataFrame(columns=["building", "floor", "room", "sensor"])
     with connect(kind) as con:
@@ -206,6 +211,8 @@ def hierarchy(kind: str) -> pd.DataFrame:
 
 
 def room_span(kind: str, building: str, room: str) -> dict:
+    if fastdb.available(kind, db_path(kind)):
+        return fastdb.room_span(kind, building, room)
     if not exists(kind):
         return {}
     with connect(kind) as con:
@@ -219,6 +226,8 @@ def room_span(kind: str, building: str, room: str) -> dict:
 
 
 def query(kind: str, building: str, room: str, start=None, end=None) -> pd.DataFrame:
+    if fastdb.available(kind, db_path(kind)):
+        return fastdb.query(kind, building, room, start, end)
     clauses = ["building = ?", "room = ?"]
     params = [building, room]
     if start is not None:

@@ -40,26 +40,30 @@ RAW_LIMIT_MS = 7 * 86400 * 1000       # ranges up to 7 days use raw readings, lo
 
 SCHEMA = """
 CREATE TABLE co2_raw (
-    building TEXT NOT NULL, room TEXT NOT NULL, ts INTEGER NOT NULL,
+    building TEXT NOT NULL, room TEXT NOT NULL, ts INTEGER NOT NULL, sensor TEXT NOT NULL DEFAULT '',
     floor TEXT, co2 REAL, temp_c REAL, humidity REAL,
-    PRIMARY KEY (building, room, ts)) WITHOUT ROWID;
+    PRIMARY KEY (building, room, ts, sensor)) WITHOUT ROWID;
 CREATE TABLE temp_raw (
-    building TEXT NOT NULL, room TEXT NOT NULL, ts INTEGER NOT NULL,
+    building TEXT NOT NULL, room TEXT NOT NULL, ts INTEGER NOT NULL, sensor TEXT NOT NULL DEFAULT '',
     floor TEXT, temp_c REAL,
-    PRIMARY KEY (building, room, ts)) WITHOUT ROWID;
+    PRIMARY KEY (building, room, ts, sensor)) WITHOUT ROWID;
 CREATE TABLE co2_hourly (
-    building TEXT NOT NULL, room TEXT NOT NULL, ts INTEGER NOT NULL,
+    building TEXT NOT NULL, room TEXT NOT NULL, ts INTEGER NOT NULL, sensor TEXT NOT NULL DEFAULT '',
     floor TEXT, co2_mean REAL, co2_max REAL, temp_c REAL, humidity REAL, n INTEGER,
-    PRIMARY KEY (building, room, ts)) WITHOUT ROWID;
+    PRIMARY KEY (building, room, ts, sensor)) WITHOUT ROWID;
 CREATE TABLE temp_hourly (
-    building TEXT NOT NULL, room TEXT NOT NULL, ts INTEGER NOT NULL,
+    building TEXT NOT NULL, room TEXT NOT NULL, ts INTEGER NOT NULL, sensor TEXT NOT NULL DEFAULT '',
     floor TEXT, temp_c REAL, temp_min REAL, temp_max REAL, n INTEGER,
-    PRIMARY KEY (building, room, ts)) WITHOUT ROWID;
+    PRIMARY KEY (building, room, ts, sensor)) WITHOUT ROWID;
 CREATE TABLE outdoor (ts INTEGER PRIMARY KEY, temp_c REAL, humidity REAL);
 CREATE TABLE rooms (
     building TEXT NOT NULL, floor TEXT, room TEXT NOT NULL,
     has_co2 INTEGER, has_temp INTEGER, first_ts INTEGER, last_ts INTEGER,
     PRIMARY KEY (building, room));
+CREATE TABLE catalog (
+    kind TEXT NOT NULL, building TEXT NOT NULL, floor TEXT, room TEXT NOT NULL, sensor TEXT NOT NULL,
+    n INTEGER, first_ts INTEGER, last_ts INTEGER,
+    PRIMARY KEY (kind, building, room, sensor));
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 """
 
@@ -89,7 +93,7 @@ def build(include_unassigned: bool) -> dict:
         # ORDER BY matches the source index (building, room, timestamp) so the rows arrive pre-sorted for the clustered key
         con.execute(f"""
             INSERT OR REPLACE INTO co2_raw
-            SELECT building, room, CAST(strftime('%s', timestamp) AS INTEGER), floor, value,
+            SELECT building, room, CAST(strftime('%s', timestamp) AS INTEGER), COALESCE(sensor, ''), floor, value,
                    CASE WHEN secondary_temperature BETWEEN -40 AND 60 THEN secondary_temperature END,
                    CASE WHEN humidity BETWEEN 0 AND 100 THEN humidity END
             FROM src_co2.readings
@@ -105,7 +109,7 @@ def build(include_unassigned: bool) -> dict:
         step("Copying temperature readings…", t0)
         con.execute(f"""
             INSERT OR REPLACE INTO temp_raw
-            SELECT building, room, CAST(strftime('%s', timestamp) AS INTEGER), floor, value
+            SELECT building, room, CAST(strftime('%s', timestamp) AS INTEGER), COALESCE(sensor, ''), floor, value
             FROM src_temp.readings
             WHERE value BETWEEN -40 AND 60 {unassigned}
             ORDER BY building, room, timestamp""")
@@ -117,12 +121,12 @@ def build(include_unassigned: bool) -> dict:
     step("Building hourly summaries…", t0)
     con.execute("""
         INSERT INTO co2_hourly
-        SELECT building, room, ts / 3600 * 3600, MAX(floor), AVG(co2), MAX(co2), AVG(temp_c), AVG(humidity), COUNT(*)
-        FROM co2_raw GROUP BY building, room, ts / 3600 ORDER BY building, room, ts / 3600""")
+        SELECT building, room, ts / 3600 * 3600, sensor, MAX(floor), AVG(co2), MAX(co2), AVG(temp_c), AVG(humidity), COUNT(*)
+        FROM co2_raw GROUP BY building, room, sensor, ts / 3600 ORDER BY building, room, ts / 3600, sensor""")
     con.execute("""
         INSERT INTO temp_hourly
-        SELECT building, room, ts / 3600 * 3600, MAX(floor), AVG(temp_c), MIN(temp_c), MAX(temp_c), COUNT(*)
-        FROM temp_raw GROUP BY building, room, ts / 3600 ORDER BY building, room, ts / 3600""")
+        SELECT building, room, ts / 3600 * 3600, sensor, MAX(floor), AVG(temp_c), MIN(temp_c), MAX(temp_c), COUNT(*)
+        FROM temp_raw GROUP BY building, room, sensor, ts / 3600 ORDER BY building, room, ts / 3600, sensor""")
 
     if out_path.exists():
         con.execute(f"ATTACH DATABASE 'file:{out_path.as_posix()}?mode=ro' AS src_out")
@@ -142,6 +146,14 @@ def build(include_unassigned: bool) -> dict:
             UNION ALL
             SELECT building, floor, room, 0, 1, MIN(ts), MAX(ts) FROM temp_hourly GROUP BY building, room)
         GROUP BY building, room""")
+    con.execute("""INSERT INTO catalog
+        SELECT 'CO₂', building, MAX(floor), room, sensor, SUM(n), MIN(ts), MAX(ts) FROM co2_hourly GROUP BY building, room, sensor""")
+    con.execute("""INSERT INTO catalog
+        SELECT 'Temperature', building, MAX(floor), room, sensor, SUM(n), MIN(ts), MAX(ts) FROM temp_hourly GROUP BY building, room, sensor""")
+    # sizes of the source files: the dashboard only trusts this copy while they still match (rebuild after new data)
+    for key, path in (("co2", co2_path), ("temp", temp_path)):
+        if path.exists():
+            con.execute("INSERT INTO meta VALUES (?, ?)", (f"src_size_{key}", str(path.stat().st_size)))
     con.execute("INSERT INTO meta VALUES ('built', datetime('now'))")
     con.execute("INSERT INTO meta VALUES ('timezone_note', 'timestamps are local clock time stored as UTC')")
     con.commit()
