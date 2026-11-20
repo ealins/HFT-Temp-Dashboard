@@ -170,8 +170,10 @@ def _sql_range(table_raw: str, table_hour: str, raw_cols: str, hour_cols: str, w
             f") ORDER BY time")
 
 
-ROOM_WHERE = ("building = substr('$room', 1, instr('$room', '/') - 1) "
-              "AND room = substr('$room', instr('$room', '/') + 1)")
+ROOM_WHERE = "building = '$building' AND room = '$room'"
+# fallback (--flat-pickers): one combined "building/room" picker
+ROOM_WHERE_FLAT = ("building = substr('$room', 1, instr('$room', '/') - 1) "
+                   "AND room = substr('$room', instr('$room', '/') + 1)")
 
 
 def _target(ref: str, sql: str, kind: str = "time series", name: str | None = None) -> dict:
@@ -188,7 +190,34 @@ def _panel(pid: int, title: str, ptype: str, x: int, y: int, w: int, h: int, tar
     return panel
 
 
-def dashboard_json(rooms: list[tuple], station: str) -> dict:
+def _var_query(sql: str) -> dict:
+    return {"queryText": sql, "rawQueryText": sql, "queryType": "table", "timeColumns": []}
+
+
+def templating(labels: list, default: tuple, flat: bool) -> list:
+    """Building -> Floor -> Room pickers (query variables), or one flat room list with --flat-pickers."""
+    if flat:
+        room_query = ",".join(f"{text} : {value}" for text, value, _, _ in labels)
+        buildings = ",".join(sorted({v.split("/")[0] for _, v, _, _ in labels}))
+        return [
+            {"name": "room", "label": "Room", "type": "custom", "query": room_query,
+             "current": {"text": default[0], "value": default[1], "selected": True}, "options": [], "multi": False, "includeAll": False},
+            {"name": "building", "label": "Building (tables)", "type": "custom", "query": buildings,
+             "current": {"text": default[1].split("/")[0], "value": default[1].split("/")[0], "selected": True},
+             "options": [], "multi": False, "includeAll": False}]
+    common = {"type": "query", "datasource": DS, "refresh": 1, "sort": 1, "multi": False, "includeAll": False, "options": []}
+    return [
+        {**common, "name": "building", "label": "Building",
+         "query": _var_query("SELECT DISTINCT building FROM rooms ORDER BY building"), "current": {}},
+        {**common, "name": "floor", "label": "Floor", "sort": 0,
+         "query": _var_query("SELECT floor FROM rooms WHERE building = '$building' GROUP BY floor ORDER BY MIN(room)"), "current": {}},
+        {**common, "name": "room", "label": "Room",
+         "query": _var_query("SELECT room FROM rooms WHERE building = '$building' AND floor = '$floor' ORDER BY room"), "current": {}},
+    ]
+
+
+def dashboard_json(rooms: list[tuple], station: str, flat: bool = False) -> dict:
+    room_where = ROOM_WHERE_FLAT if flat else ROOM_WHERE
     ok = [r for r in rooms if not re.search(r"[,:/]", f"{r[0]}{r[2]}")]
     labels = []
     for building, floor, room, has_co2, has_temp, last_ts in sorted(ok, key=lambda r: (-(r[5] or 0) * 0, r[0], r[2])):
@@ -201,19 +230,19 @@ def dashboard_json(rooms: list[tuple], station: str) -> dict:
     time_rng = "ts >= $__from / 1000 AND ts <= $__to / 1000"
     bwhere = "building = '$building'"
 
-    co2 = _target("A", _sql_range("co2_raw", "co2_hourly", "co2", "co2_mean", ROOM_WHERE), name="CO2 (ppm)")
-    t_room = _target("A", _sql_range("temp_raw", "temp_hourly", "temp_c", "temp_c", ROOM_WHERE), name="Room temperature sensor")
-    t_co2 = _target("B", _sql_range("co2_raw", "co2_hourly", "temp_c", "temp_c", ROOM_WHERE), name="CO2 sensor thermometer")
+    co2 = _target("A", _sql_range("co2_raw", "co2_hourly", "co2", "co2_mean", room_where), name="CO2 (ppm)")
+    t_room = _target("A", _sql_range("temp_raw", "temp_hourly", "temp_c", "temp_c", room_where), name="Room temperature sensor")
+    t_co2 = _target("B", _sql_range("co2_raw", "co2_hourly", "temp_c", "temp_c", room_where), name="CO2 sensor thermometer")
     t_out = _target("C", f"SELECT ts AS time, temp_c AS \"Outdoor (DWD)\" FROM outdoor WHERE {time_rng} ORDER BY ts")
-    hum = _target("A", _sql_range("co2_raw", "co2_hourly", "humidity", "humidity", ROOM_WHERE), name="Humidity (%)")
+    hum = _target("A", _sql_range("co2_raw", "co2_hourly", "humidity", "humidity", room_where), name="Humidity (%)")
 
-    stat_hours = _target("A", f"SELECT COUNT(*) AS \"Hours with mean ≥ 1000 ppm\" FROM co2_hourly WHERE {ROOM_WHERE} AND {time_rng} AND co2_mean >= 1000", "table")
-    stat_peak = _target("A", f"SELECT ROUND(MAX(co2_max)) AS \"Peak CO2 (ppm)\" FROM co2_hourly WHERE {ROOM_WHERE} AND {time_rng}", "table")
-    stat_mean = _target("A", f"SELECT ROUND(AVG(co2_mean)) AS \"Mean CO2 (ppm)\" FROM co2_hourly WHERE {ROOM_WHERE} AND {time_rng}", "table")
-    stat_temp = _target("A", f"SELECT ROUND(AVG(temp_c), 1) AS \"Mean room temp (°C)\" FROM (SELECT temp_c FROM temp_hourly WHERE {ROOM_WHERE} AND {time_rng} "
-                           f"UNION ALL SELECT temp_c FROM co2_hourly WHERE {ROOM_WHERE} AND {time_rng})", "table")
+    stat_hours = _target("A", f"SELECT COUNT(*) AS \"Hours with mean ≥ 1000 ppm\" FROM co2_hourly WHERE {room_where} AND {time_rng} AND co2_mean >= 1000", "table")
+    stat_peak = _target("A", f"SELECT ROUND(MAX(co2_max)) AS \"Peak CO2 (ppm)\" FROM co2_hourly WHERE {room_where} AND {time_rng}", "table")
+    stat_mean = _target("A", f"SELECT ROUND(AVG(co2_mean)) AS \"Mean CO2 (ppm)\" FROM co2_hourly WHERE {room_where} AND {time_rng}", "table")
+    stat_temp = _target("A", f"SELECT ROUND(AVG(temp_c), 1) AS \"Mean room temp (°C)\" FROM (SELECT temp_c FROM temp_hourly WHERE {room_where} AND {time_rng} "
+                           f"UNION ALL SELECT temp_c FROM co2_hourly WHERE {room_where} AND {time_rng})", "table")
     diurnal = _target("A", f"SELECT strftime('%H', ts, 'unixepoch') AS hour, ROUND(AVG(co2_mean)) AS \"Mean CO2 (ppm)\" "
-                           f"FROM co2_hourly WHERE {ROOM_WHERE} AND {time_rng} GROUP BY hour ORDER BY hour", "table")
+                           f"FROM co2_hourly WHERE {room_where} AND {time_rng} GROUP BY hour ORDER BY hour", "table")
     table = _target("A", f"SELECT room AS Room, MAX(floor) AS Floor, ROUND(AVG(co2_mean)) AS \"Mean CO2\", ROUND(MAX(co2_max)) AS \"Peak CO2\", "
                          f"SUM(co2_mean >= 1000) AS \"Hours >= 1000 ppm\", ROUND(AVG(temp_c), 1) AS \"Mean C (CO2 sensor)\" "
                          f"FROM co2_hourly WHERE {bwhere} AND {time_rng} GROUP BY room ORDER BY SUM(co2_mean >= 1000) DESC", "table")
@@ -242,12 +271,7 @@ def dashboard_json(rooms: list[tuple], station: str) -> dict:
         "uid": "hft-rooms", "title": "HFT indoor climate", "tags": ["hft"], "timezone": "utc", "schemaVersion": 39, "version": 1,
         "editable": True, "refresh": "", "time": {"from": "now-1y", "to": "now"}, "graphTooltip": 1,
         "description": f"Built by scripts/build_grafana_db.py. Times are local clock times (UTC zone on purpose). Outdoor: {station or 'none loaded'}.",
-        "templating": {"list": [
-            {"name": "room", "label": "Room", "type": "custom", "query": room_query,
-             "current": {"text": default[0], "value": default[1], "selected": True}, "options": [], "multi": False, "includeAll": False},
-            {"name": "building", "label": "Building (tables)", "type": "custom", "query": building_query,
-             "current": {"text": default[1].split("/")[0], "value": default[1].split("/")[0], "selected": True}, "options": [], "multi": False, "includeAll": False},
-        ]},
+        "templating": {"list": templating(labels, default, flat)},
         "panels": panels,
     }
 
@@ -256,6 +280,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Build data/grafana/hft_sensors.db and the Grafana dashboard")
     ap.add_argument("--include-unassigned", action="store_true", help="Also copy readings without a building/room")
     ap.add_argument("--dashboard-only", action="store_true", help="Regenerate only the dashboard JSON from the existing database")
+    ap.add_argument("--flat-pickers", action="store_true", help="One combined room dropdown instead of Building/Floor/Room")
     args = ap.parse_args()
     if args.dashboard_only:
         con = sqlite3.connect(f"file:{OUT_DB.as_posix()}?mode=ro", uri=True)
@@ -269,7 +294,7 @@ def main() -> int:
         station = (con.execute("SELECT value FROM meta WHERE key='outdoor_station'").fetchone() or [""])[0]
         con.close()
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
-    DASHBOARD_FILE.write_text(json.dumps(dashboard_json(rooms, station), indent=2, ensure_ascii=False), encoding="utf-8")
+    DASHBOARD_FILE.write_text(json.dumps(dashboard_json(rooms, station, args.flat_pickers), indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Dashboard written: {DASHBOARD_FILE}  ({len(rooms)} rooms)")
     print("Next: cd grafana ; docker compose up -d ; open http://localhost:3000")
     return 0

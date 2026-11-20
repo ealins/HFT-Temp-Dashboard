@@ -19,10 +19,12 @@ def _epoch_ms(ts) -> int:
     return int(pd.Timestamp(ts).tz_localize("UTC").timestamp() * 1000)
 
 
-def dashboard_url(building: str, room: str | None, start, end, kiosk: bool = True) -> str:
+def dashboard_url(building: str, room: str | None, start, end, kiosk: bool = True, floor: str | None = None, flat: bool = False) -> str:
     params = {"orgId": 1, "from": _epoch_ms(start), "to": _epoch_ms(end), "theme": "light", "var-building": building}
+    if floor:
+        params["var-floor"] = floor
     if room:
-        params["var-room"] = f"{building}/{room}"
+        params["var-room"] = f"{building}/{room}" if flat else room
     url = f"{GRAFANA_URL}{DASHBOARD_PATH}?{urllib.parse.urlencode(params)}"
     return url + ("&kiosk" if kiosk else "")
 
@@ -43,7 +45,7 @@ def render_grafana(building: str, floor: str, room: str | None, start, end) -> N
         st.caption("Set the GRAFANA_URL environment variable if Grafana runs on another address.")
         return
     height = st.sidebar.slider("Grafana height (px)", 600, 1600, 1100, 50)
-    url = dashboard_url(building, room, start, end)
+    url = dashboard_url(building, room, start, end, floor=floor)
     st.caption(f"Building {building}, room {room or '-'}, {pd.Timestamp(start):%d %b %Y} → {pd.Timestamp(end):%d %b %Y}. "
-               f"[Open in its own tab]({dashboard_url(building, room, start, end, kiosk=False)})")
+               f"[Open in its own tab]({dashboard_url(building, room, start, end, kiosk=False, floor=floor)})")
     components.iframe(url, height=height, scrolling=True)
