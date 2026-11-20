@@ -130,8 +130,13 @@ def init_db(kind: str, replace: bool = False, with_indexes: bool = True) -> sqli
     return con
 
 
-def create_indexes(con: sqlite3.Connection) -> None:
-    _ensure_floor_column(con)
+FLOOR_REPAIR_VERSION = 1   # stored in PRAGMA user_version once the (slow, full-table) floor repair has run
+
+
+def create_indexes(con: sqlite3.Connection, repair_floors: bool = True) -> None:
+    if repair_floors:
+        _ensure_floor_column(con)
+        con.execute(f"PRAGMA user_version = {FLOOR_REPAIR_VERSION}")
     con.execute("CREATE INDEX IF NOT EXISTS idx_readings_brt ON readings(building, room, timestamp)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_readings_bfrst ON readings(building, floor, room, sensor, timestamp)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_readings_sensor_time ON readings(sensor, timestamp)")
@@ -144,7 +149,9 @@ def ensure_database_ready(kind: str) -> None:
         return
     with connect(kind) as con:
         if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='readings'").fetchone():
-            create_indexes(con)
+            # The floor repair scans every row (about a minute on 10 M readings): run it once, not at every start.
+            done = con.execute("PRAGMA user_version").fetchone()[0] >= FLOOR_REPAIR_VERSION
+            create_indexes(con, repair_floors=not done)
 
 
 def insert_rows(con: sqlite3.Connection, rows: Iterable[tuple], batch: int = 100000) -> int:
