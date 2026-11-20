@@ -27,7 +27,9 @@ def dashboard_url(building: str, room: str | None, start, end, kiosk: bool = Tru
     return url + ("&kiosk" if kiosk else "")
 
 
-def _reachable(timeout: float = 1.5) -> bool:
+@st.cache_data(ttl=30, show_spinner=False)
+def grafana_available(timeout: float = 1.0) -> bool:
+    """True if Grafana answers. Cached for 30 s so a missing Grafana does not slow every click."""
     try:
         with urllib.request.urlopen(f"{GRAFANA_URL}/api/health", timeout=timeout):
             return True
@@ -36,8 +38,7 @@ def _reachable(timeout: float = 1.5) -> bool:
 
 
 def render_grafana(building: str, floor: str, room: str | None, start, end) -> None:
-    st.subheader("Grafana charts")
-    if not _reachable():
+        if not grafana_available():
         st.warning(f"Grafana is not reachable at {GRAFANA_URL}. Start it (see README, section Grafana), then reload this view.")
         st.caption("Set the GRAFANA_URL environment variable if Grafana runs on another address.")
         return
